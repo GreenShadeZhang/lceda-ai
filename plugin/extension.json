@@ -1,0 +1,21 @@
+{
+  "name": "ai-sch-generator",
+  "uuid": "f7a3c912-4d8e-4b1f-9e6a-2c5d3f807b14",
+  "displayName": "AI 原理图生成器",
+  "version": "0.1.0",
+  "description": "通过自然语言描述自动生成立创EDA原理图的AI插件",
+  "entry": "./dist/index",
+  "categories": "Schematic",
+  "activationEvents": ["onStartup"],
+  "headerMenus": [
+    {
+      "menuId": "sch",
+      "menus": [
+        {
+          "menuName": "AI 生成原理图",
+          "registerFn": "openAIPanel"
+        }
+      ]
+    }
+  ]
+}

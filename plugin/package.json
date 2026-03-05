@@ -1,0 +1,17 @@
+{
+  "name": "ai-sch-generator",
+  "version": "0.1.0",
+  "description": "AI 原理图生成器 - 立创EDA插件",
+  "private": true,
+  "scripts": {
+    "build": "node build.js",
+    "typecheck": "tsc --noEmit",
+    "watch": "node build.js --watch"
+  },
+  "devDependencies": {
+    "@jlceda/pro-api-types": "*",
+    "archiver": "^6.0.2",
+    "esbuild": "^0.24.2",
+    "typescript": "^5.6.3"
+  }
+}
