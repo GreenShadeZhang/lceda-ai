@@ -1,5 +1,8 @@
 ---
-stepsCompleted: [1, 2, 3, 4]
+stepsCompleted: [1, 2, 3, 4, 5, 6, 7, 8]
+lastStep: 8
+status: 'complete'
+completedAt: '2026-03-05'
 inputDocuments:
   - product-brief-ai-eda-schematic-generator-2026-03-05.md
 workflowType: 'architecture'
@@ -666,3 +669,462 @@ services:
 | Backend → OpenAI | LLM 电路解析 |
 | Plugin 主线程 → EDA SDK | 放置器件 / 连线 / 保存 |
 | Plugin 主线程 ↔ IFrame | postMessage 双向通信（token 同步、电路 JSON 传递） |
+
+---
+
+## Implementation Patterns & Consistency Rules
+
+### 识别到的潜在冲突点
+
+本项目横跨 TypeScript（插件）、C#（后端）、SQL（数据库）三种语言生态，共识别 **6 类**潜在一致性冲突点，需统一规范。
+
+---
+
+### 命名规范
+
+#### 后端 C#（ASP.NET Core）
+
+| 元素 | 规范 | 示例 |
+|------|------|------|
+| 类、接口、方法 | PascalCase | `SchematicService`, `GenerateAsync()` |
+| 属性、参数 | PascalCase（属性）/ camelCase（参数） | `public string UserId` / `string userId` |
+| 私有字段 | `_camelCase` | `private readonly ILogger _logger` |
+| 常量 | PascalCase | `MaxRetryCount` |
+| 文件名 | 与类名一致 | `SchematicController.cs` |
+
+#### 数据库（PostgreSQL via EF Core）
+
+| 元素 | 规范 | 示例 |
+|------|------|------|
+| 表名 | `snake_case` 复数 | `schematic_histories`, `users` |
+| 列名 | `snake_case` | `user_id`, `created_at`, `circuit_json` |
+| 外键 | `{table}_id` | `user_id` |
+| 索引 | `idx_{table}_{column}` | `idx_schematic_histories_user_id` |
+
+> 使用 `UseSnakeCaseNamingConvention()`（Npgsql EF Core 扩展）自动处理 C# PascalCase → DB snake_case 映射。
+
+#### API 路径与 JSON 字段
+
+| 元素 | 规范 | 示例 |
+|------|------|------|
+| API 路径段 | 全小写 kebab-case，复数名词 | `/api/schematics/generate` |
+| 路径参数 | camelCase | `/api/schematics/{schematicId}` |
+| Query 参数 | camelCase | `?pageSize=10&pageIndex=1` |
+| JSON 请求/响应字段 | camelCase | `"userInput"`, `"circuitJson"` |
+
+#### TypeScript（EDA 插件）
+
+| 元素 | 规范 | 示例 |
+|------|------|------|
+| 变量、函数 | camelCase | `openAIPanel()`, `accessToken` |
+| 类、接口、类型 | PascalCase | `CircuitJson`, `IComponentItem` |
+| 常量 | SCREAMING_SNAKE_CASE | `MAX_RETRY_COUNT` |
+| 文件名 | camelCase | `schematicGenerator.ts` |
+
+---
+
+### API 响应格式统一包装
+
+所有 API 响应使用统一 Wrapper，禁止直接返回裸数据或裸错误：
+
+```json
+// 成功
+{ "success": true, "data": { ... } }
+
+// 失败
+{
+  "success": false,
+  "error": {
+    "code": "COMPONENT_NOT_FOUND",
+    "message": "未找到匹配的立创官方库元件",
+    "details": null
+  }
+}
+```
+
+**标准错误码（`error.code`）：**
+
+| 错误码 | 场景 |
+|--------|------|
+| `COMPONENT_NOT_FOUND` | 立创库中无匹配元件 |
+| `LLM_PARSE_ERROR` | LLM 返回无效 JSON |
+| `AUTH_REQUIRED` | Token 缺失或过期 |
+| `INVALID_REQUEST` | 请求参数校验失败 |
+| `INTERNAL_ERROR` | 后端未预期异常 |
+
+**HTTP 状态码使用约定：**
+- `200` — 成功（含业务失败时也返回 200 + `success: false`）
+- `401` — 未认证（JWT 无效/过期）
+- `403` — 无权限
+- `422` — 请求参数校验失败
+- `500` — 服务器内部错误
+
+---
+
+### IFrame ↔ Plugin 主线程消息规范
+
+消息类型命名：`SCREAMING_SNAKE_CASE`，方向明确。
+
+```typescript
+// 消息类型常量（插件与 IFrame 共享）
+const MSG = {
+  // IFrame → 主线程
+  AUTH_SUCCESS:     'AUTH_SUCCESS',
+  AUTH_FAILURE:     'AUTH_FAILURE',
+  GENERATE_REQUEST: 'GENERATE_REQUEST',
+
+  // 主线程 → IFrame
+  AUTH_TOKEN_SYNC:  'AUTH_TOKEN_SYNC',
+  GENERATE_RESULT:  'GENERATE_RESULT',
+  GENERATE_ERROR:   'GENERATE_ERROR',
+} as const;
+
+// 消息 Payload 结构
+interface AuthSuccessMessage {
+  type: typeof MSG.AUTH_SUCCESS;
+  accessToken: string;
+  refreshToken: string;
+}
+
+interface GenerateRequestMessage {
+  type: typeof MSG.GENERATE_REQUEST;
+  userInput: string;
+  authToken: string;
+}
+
+interface GenerateResultMessage {
+  type: typeof MSG.GENERATE_RESULT;
+  circuitJson: CircuitJson;
+}
+```
+
+---
+
+### 错误处理规范
+
+| 层级 | 处理方式 | 用户可见 |
+|------|----------|----------|
+| LLM 解析失败 | 后端返回 `LLM_PARSE_ERROR`，记录原始响应 | `sys_ToastMessage` 提示重试 |
+| 元件验证失败 | 插件侧过滤无效元件，提示具体元件名 | Toast 警告 |
+| Token 过期 | IFrame 静默刷新，失败则重定向登录 | 仅登录失败时提示 |
+| EDA SDK 调用失败 | try/catch 捕获，记录日志 | Toast 错误 + 不保存文档 |
+| 网络超时 | 最多重试 2 次，退出后告知用户 | Toast 错误 |
+
+---
+
+### 所有 AI Agent 执行时必须遵守
+
+1. **数据库列命名必须 `snake_case`**，通过 EF Core `UseSnakeCaseNamingConvention()` 统一处理
+2. **API JSON 字段必须 `camelCase`**，后端配置 `JsonNamingPolicy.CamelCase`
+3. **所有 API 响应必须使用统一 Wrapper**（`{ success, data }` / `{ success, error }`）
+4. **IFrame ↔ 主线程消息必须使用 `MSG` 常量**，禁止硬编码字符串
+5. **EDA 元件放置前必须调用 `lib_Device.getByLcscIds()` 验证**，不得跳过验证直接放置
+6. **token 存储只能使用 `eda.sys_Storage`**，不得存入 `localStorage`（IFrame 隔离问题）
+
+---
+
+## Project Structure & Boundaries
+
+### 需求到组件映射
+
+| 功能需求 | 所属模块 | 主要文件 |
+|----------|----------|----------|
+| 对话 UI 面板 | `plugin/iframe/` | `index.html`, `app.js`, `callback.html` |
+| EDA SDK 放置器件/连线 | `plugin/src/` | `schematicGenerator.ts` |
+| IFrame 通信协调 | `plugin/src/` | `index.ts` |
+| OIDC 登录流程 | `plugin/iframe/` | `auth.js`, `callback.html` |
+| AI 服务 API | `backend/Api/` | `SchematicController.cs` |
+| Agent 电路解析 | `backend/Agents/` | `CircuitParserAgent.cs` |
+| 元件搜索工具 | `backend/Tools/` | `ComponentSearchTool.cs` |
+| 数据持久化 | `backend/Infrastructure/` | `AppDbContext.cs`, `Migrations/` |
+| 本地开发环境 | 根目录 | `docker-compose.yml` |
+
+---
+
+### 完整项目目录结构
+
+```
+ai-eda-schematic-generator/
+├── README.md
+├── docker-compose.yml              # 本地开发：API + PostgreSQL + Keycloak + Redis
+├── docker-compose.override.yml     # 开发者本地覆盖（可选）
+├── .env.example                    # 环境变量模板（不含敏感值）
+├── .gitignore
+│
+├── plugin/                         # 立创EDA 插件（TypeScript）
+│   ├── package.json
+│   ├── tsconfig.json
+│   ├── extension.json              # 插件配置（菜单、entry、categories）
+│   ├── src/
+│   │   ├── index.ts                # 主线程入口：菜单注册、消息监听、EDA SDK 调用
+│   │   ├── schematicGenerator.ts   # EDA SDK 封装：放置器件、连线、保存
+│   │   ├── componentValidator.ts   # 元件验证：调用 lib_Device.getByLcscIds() 验证
+│   │   ├── messageTypes.ts         # IFrame ↔ 主线程消息类型常量与接口定义
+│   │   └── types/
+│   │       └── circuitJson.ts      # 电路 JSON 数据契约 TypeScript 类型
+│   ├── iframe/
+│   │   ├── index.html              # 对话 UI 主页面
+│   │   ├── callback.html           # OIDC 授权码回调页（PKCE token 兑换）
+│   │   ├── app.js                  # 对话逻辑：调用后端 API、SSE 处理
+│   │   ├── auth.js                 # OIDC 登录逻辑：构建授权 URL、token 刷新
+│   │   └── style.css
+│   ├── build/
+│   │   └── dist/                   # 构建输出：*.eext 文件
+│   └── .gitignore
+│
+├── backend/                        # ASP.NET Core 后端 AI 服务
+│   ├── AiSchBackend.sln
+│   ├── src/
+│   │   └── AiSchBackend/
+│   │       ├── AiSchBackend.csproj
+│   │       ├── Program.cs          # 应用入口：DI 注册、中间件配置
+│   │       ├── appsettings.json
+│   │       ├── appsettings.Development.json
+│   │       │
+│   │       ├── Api/                # 控制器层
+│   │       │   ├── SchematicController.cs   # POST /api/schematics/generate
+│   │       │   ├── ComponentsController.cs  # GET  /api/components/search
+│   │       │   └── HealthController.cs      # GET  /api/health
+│   │       │
+│   │       ├── Agents/             # Microsoft Agent Framework
+│   │       │   ├── CircuitParserAgent.cs    # 主 Agent：解析需求 → 生成电路 JSON
+│   │       │   └── AgentConfiguration.cs   # Agent 注册与配置
+│   │       │
+│   │       ├── Tools/              # Agent 工具函数
+│   │       │   └── ComponentSearchTool.cs  # 工具：搜索立创官方库元件
+│   │       │
+│   │       ├── Services/           # 业务逻辑层
+│   │       │   ├── SchematicService.cs     # 生成流程编排
+│   │       │   └── ComponentService.cs     # 元件查询与缓存
+│   │       │
+│   │       ├── Infrastructure/     # 数据访问层
+│   │       │   ├── AppDbContext.cs         # EF Core DbContext
+│   │       │   ├── Migrations/             # EF Core 迁移文件
+│   │       │   └── Repositories/
+│   │       │       └── SchematicHistoryRepository.cs
+│   │       │
+│   │       ├── Models/             # 领域模型
+│   │       │   ├── SchematicHistory.cs     # EF Core 实体
+│   │       │   └── CircuitJsonSchema.cs    # 电路 JSON C# 模型
+│   │       │
+│   │       └── Contracts/          # 请求/响应 DTO
+│   │           ├── GenerateRequest.cs
+│   │           ├── GenerateResponse.cs
+│   │           └── ApiResponse.cs          # 统一响应 Wrapper
+│   │
+│   └── tests/
+│       └── AiSchBackend.Tests/
+│           ├── AiSchBackend.Tests.csproj
+│           ├── Api/
+│           │   └── SchematicControllerTests.cs
+│           ├── Agents/
+│           │   └── CircuitParserAgentTests.cs
+│           └── Services/
+│               └── SchematicServiceTests.cs
+│
+└── docs/                           # 项目文档
+    ├── api-spec.md                 # API 接口规范
+    ├── circuit-json-schema.md      # 电路 JSON 格式说明
+    └── keycloak-setup.md           # Keycloak 配置指南
+```
+
+---
+
+### 组件边界与集成点
+
+#### 外部 API 边界
+
+| 边界 | 方向 | 协议 | 认证 |
+|------|------|------|------|
+| IFrame → Backend | 出站 | HTTPS REST / SSE | Bearer JWT |
+| Backend → OpenAI | 出站 | HTTPS | API Key |
+| IFrame → Keycloak | 出站 | HTTPS OIDC | PKCE Code Flow |
+| Backend → Keycloak JWKS | 出站 | HTTPS | 无（公钥验证） |
+
+#### 内部模块边界
+
+```
+plugin/src/index.ts
+  ├── 依赖 → schematicGenerator.ts（EDA SDK 封装）
+  ├── 依赖 → componentValidator.ts（元件验证）
+  ├── 依赖 → messageTypes.ts（消息常量）
+  └── 通信 → iframe/（postMessage）
+
+backend/Api/SchematicController.cs
+  └── 依赖 → Services/SchematicService.cs
+          └── 依赖 → Agents/CircuitParserAgent.cs
+                  └── 依赖 → Tools/ComponentSearchTool.cs
+          └── 依赖 → Infrastructure/Repositories/
+```
+
+#### 数据流边界
+
+```
+[用户输入] 
+  → iframe/app.js（fetch POST /api/schematics/generate）
+  → SchematicController → SchematicService → CircuitParserAgent
+  → OpenAI LLM → 电路 JSON
+  → SchematicHistory 记录写入 PostgreSQL
+  → 响应返回 IFrame
+  → postMessage GENERATE_RESULT → index.ts
+  → schematicGenerator.ts 调用 EDA SDK
+  → 原理图画布
+```
+
+---
+
+### 关键配置文件说明
+
+| 文件 | 说明 |
+|------|------|
+| `plugin/extension.json` | 插件唯一标识、菜单定义、entry 入口 |
+| `backend/appsettings.json` | 非敏感配置（Keycloak Authority、API 路径前缀） |
+| `.env.example` | 敏感配置模板（OpenAI Key、DB 密码）——实际值不提交 Git |
+| `docker-compose.yml` | 本地完整环境（无需手动安装 PostgreSQL/Keycloak） |
+
+---
+
+## Architecture Validation Results
+
+### Coherence Validation ✅
+
+**技术决策兼容性：**
+所有技术选型相互兼容，无版本冲突。TypeScript 插件通过 HTTPS REST/SSE 与 ASP.NET Core 后端通信；EF Core + Npgsql + `UseSnakeCaseNamingConvention()` 消除 C# PascalCase ↔ DB snake_case 映射冲突；Microsoft Agent Framework 与 Azure.AI.OpenAI NuGet 同一生态；Keycloak PKCE 流程在 IFrame 架构中自洽；Redis 通过 Docker Compose profile 隔离，不影响基础开发路径。
+
+**模式一致性：**
+DB `snake_case` / API JSON `camelCase` / C# `PascalCase` 三套命名体系均通过自动转换工具处理，无手工同步风险。统一 `ApiResponse<T>` Wrapper 贯穿所有 API 端点。postMessage 类型集中在 `messageTypes.ts`，消除硬编码字符串风险。
+
+**结构对齐：**
+`plugin/` ↔ `backend/` 双仓库边界清晰，唯一通信通道是 HTTPS REST/SSE（Bearer token 验证）。依赖方向单向：`Api → Services → Agents → Tools → Infrastructure`，无循环依赖。
+
+---
+
+### Requirements Coverage Validation ✅
+
+**功能需求覆盖：**
+
+| 需求 | 架构支撑 | 状态 |
+|------|----------|------|
+| FR-01 自然语言对话 | `iframe/index.html` + `app.js` + LLM SSE 流式输出 | ✅ |
+| FR-02 AI 解析 + 元件匹配 | `CircuitParserAgent` + `ComponentSearchTool` | ✅ |
+| FR-03 自动放置器件/连线 | `schematicGenerator.ts` 封装 EDA SDK 放置 API | ✅ |
+| FR-04 官方库元件验证 | `componentValidator.ts` 强制调用 `lib_Device.getByLcscIds()` | ✅ |
+| FR-05 网络标识（GND/VCC） | `schematicGenerator.ts` 调用 `createNetFlag()` | ✅ |
+| FR-06 自动保存原理图 | `schematicGenerator.ts` 末尾调用 `eda.sch_Document.save()` | ✅ |
+
+**非功能性需求覆盖：**
+
+| NFR | 架构支撑 | 状态 |
+|-----|----------|------|
+| 安全（HTTP 限制） | LLM 调用仅在 IFrame 内发起，主线程不发外部 HTTP | ✅ |
+| 安全（Auth） | Keycloak PKCE，token 存 `eda.sys_Storage`（隔离 IFrame） | ✅ |
+| 可靠性（错误提示） | 分层错误处理 + `sys_ToastMessage` + ProblemDetails RFC 7807 | ✅ |
+| 可维护性 | Clean Architecture 分层（Api/Services/Agents/Tools/Infrastructure） | ✅ |
+| 本地开发 | Docker Compose 一键启动全栈环境 | ✅ |
+
+---
+
+### Implementation Readiness Validation ✅
+
+**决策完整性：**
+九条 ADR（ADR-01 ~ ADR-09）均已包含决策背景、选项对比、最终决策及实施指导。所有关键技术的版本或生态已明确（.NET 10、EF Core + Npgsql、Azure. AI.OpenAI、Keycloak OIDC）。
+
+**结构完整性：**
+完整项目目录树已定义，每个文件的职责均已说明，无泛化占位符。组件间依赖方向、API 边界、数据流路径全部文档化。
+
+**模式完整性：**
+命名规范（C#/DB/API/TypeScript）、API 响应 Wrapper、postMessage 消息协议、错误处理规范、6 条强制规则均已定义，AI Agent 可直接遵循执行。
+
+---
+
+### Gap Analysis Results
+
+**Critical Gaps（阻塞实现）：** 无 ✅
+
+**Important Gaps（建议，不阻塞 POC）：**
+
+| # | 缺口 | 处理方式 |
+|---|------|----------|
+| G-01 | `docker-compose.yml` 具体服务端口/环境变量 | 已规划到 `docker-compose.yml` 注释中实现 |
+| G-02 | Keycloak Realm/Client 配置步骤 | 已规划到 `docs/keycloak-setup.md` |
+| G-03 | SSE 流格式具体示例（`data: {...}\n\n`） | 已规划到 `docs/api-spec.md` |
+
+所有 Important Gaps 均已有明确的文档归属，架构层面无需修改。
+
+---
+
+### Architecture Completeness Checklist
+
+**✅ Requirements Analysis**
+
+- [x] 项目上下文深入分析
+- [x] 规模与复杂度评估（中等，POC 阶段）
+- [x] 技术约束识别（IFrame HTTP 限制、EDA SDK 限制）
+- [x] 跨切面关注点映射（安全、错误处理、数据一致性）
+
+**✅ Architectural Decisions（ADR-01 ~ ADR-09）**
+
+- [x] ADR-01：ASP.NET Core .NET 10 后端
+- [x] ADR-02：OpenAI 兼容 SDK（Azure.AI.OpenAI）
+- [x] ADR-03：Microsoft Agent Framework .NET
+- [x] ADR-04：PostgreSQL + Redis 数据层
+- [x] ADR-05：Keycloak OIDC PKCE 认证流程
+- [x] ADR-06：REST + SSE API 风格
+- [x] ADR-07：EF Core + Npgsql ORM
+- [x] ADR-08：Docker Compose 本地开发环境
+- [x] ADR-09：电路 JSON 数据契约规范
+
+**✅ Implementation Patterns**
+
+- [x] 命名规范（C# / DB / API / TypeScript 四套体系）
+- [x] API 响应统一 Wrapper 及标准错误码
+- [x] postMessage 消息类型协议与 Payload 接口
+- [x] 错误处理分层规范
+- [x] AI Agent 强制执行规则（6 条）
+
+**✅ Project Structure**
+
+- [x] 完整功能需求 → 组件/目录映射表
+- [x] 双仓库完整目录树（含每个文件职责说明）
+- [x] 组件边界定义（外部 API 边界 + 内部模块边界）
+- [x] 数据流路径文档化
+- [x] 关键配置文件说明
+
+---
+
+### Architecture Readiness Assessment
+
+**Overall Status:** ✅ READY FOR IMPLEMENTATION
+
+**Confidence Level:** High
+
+**关键优势：**
+- EDA SDK 技术调研详尽，所有 API 调用均有官方来源支撑
+- 认证流程（Keycloak PKCE）在 IFrame 沙箱约束下的实现路径清晰
+- ADR 数量适中（9 条），覆盖所有关键决策点，无过度设计
+- AI Agent 强制规则明确，可有效防止实现漂移
+
+**后续增强空间（POC 后）：**
+- SSE → WebSocket 升级（支持多轮协作电路编辑）
+- OpenTelemetry 可观测性集成
+- 电路 JSON Schema 标准化（`.json` Schema 文件）
+- 立创商城自动下单流程集成
+
+### Implementation Handoff
+
+**AI Agent 实现指南：**
+1. 严格遵循所有 ADR 决策，不得绕过或替换已定义技术
+2. 所有命名遵循对应规范（C#/DB/API/TypeScript 四套）
+3. 所有 API 响应使用统一 `ApiResponse<T>` Wrapper
+4. postMessage 类型仅从 `messageTypes.ts` 常量引用
+5. 元件放置前必须调用 `componentValidator.ts` 验证
+6. 本文档是所有架构疑问的权威来源
+
+**第一实现优先级（Plugin 基础能力优先）：**
+1. 搭建 `plugin/` 项目结构，配置 `extension.json` 和 `package.json`
+2. 实现 `iframe/index.html` + `auth.js`（Keycloak PKCE 登录）
+3. 实现 `index.ts` 主线程 + postMessage 通信框架
+4. 搭建 `backend/` ASP.NET Core 项目，配置 DI 和中间件
+5. 实现 `CircuitParserAgent` + `ComponentSearchTool`（核心 AI 能力）
+6. 实现 `schematicGenerator.ts`（EDA SDK 放置/连线/保存）
+7. 端到端联调：输入 "LDO 5V 转 3.3V" → 生成原理图
