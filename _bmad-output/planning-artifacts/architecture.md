@@ -1,5 +1,5 @@
 ---
-stepsCompleted: [1, 2]
+stepsCompleted: [1, 2, 3]
 inputDocuments:
   - product-brief-ai-eda-schematic-generator-2026-03-05.md
 workflowType: 'architecture'
@@ -249,3 +249,135 @@ sch_Document.save()
 3. **元件验证**：所有 AI 推荐元件必须经过 `lib_Device.search()` / `getByLcscIds()` 二次验证，防止幻觉元件被放置
 4. **坐标算法**：自动布局坐标算法（或依赖 `sch_Document.autoLayout()`）确保元件不重叠
 5. **网络连接正确性**：导线端点必须精确对齐元件引脚坐标，否则不会形成有效电气连接
+
+---
+
+## Starter Template & Technology Foundation
+
+### ADR-01：后端服务语言 — .NET (ASP.NET Core)
+
+**决策**：使用 .NET (C#) 实现后端 AI 服务
+
+**权衡分析：**
+
+| 选项 | 优势 | 劣势 | 决策 |
+|------|------|------|------|
+| **.NET (C#)** | 强类型、高性能、Microsoft Agent Framework 原生支持、ASP.NET Core 企业级成熟度 | 部署镜像相对较大 | ✅ 选用 |
+| Node.js | 与 Plugin 同语言生态 | 弱类型，Agent 框架成熟度不足 | ❌ |
+| Python | AI/ML 生态最丰富 | 与 Microsoft Agent Framework .NET 不对齐 | ❌ |
+
+**理由**：团队有 .NET 经验，Microsoft Agent Framework 提供原生 .NET 10 支持，`Azure.AI.OpenAI` NuGet 包与 OpenAI 兼容 SDK 完整对齐。
+
+---
+
+### ADR-02：LLM 接入方式 — OpenAI 兼容 SDK
+
+**决策**：使用 OpenAI 兼容 SDK（`Azure.AI.OpenAI` / `OpenAI` NuGet 包）
+
+**关键优势**：
+- 统一接口覆盖：OpenAI GPT-4o、Azure OpenAI、本地模型（Ollama + OpenAI 兼容层）
+- 模型切换零成本：只改 endpoint + model name，代码不变
+- POC 阶段可先用 OpenAI API，生产可切换至 Azure OpenAI 满足数据合规要求
+
+```csharp
+// 标准 OpenAI 兼容调用示例
+var client = new OpenAIClient(new Uri(endpoint), new ApiKeyCredential(apiKey));
+var chat = client.GetChatClient(modelName);
+var response = await chat.CompleteChatAsync(messages);
+```
+
+---
+
+### ADR-03：Agent 编排框架 — Microsoft Agent Framework (.NET)
+
+**决策**：使用 [Microsoft Agent Framework .NET](https://github.com/microsoft/agent-framework/tree/main/dotnet)
+
+**框架能力：**
+- 基于 .NET 10，活跃维护（最近提交：11小时前）
+- 支持单 Agent / 多 Agent 协作 / 工作流编排
+- 内置 `Azure.AI.OpenAI` + `OpenAI.Responses` 集成
+- 提供 Workflow Samples（多 Agent 模式）
+
+**POC 阶段 Agent 设计：**
+```
+单 Agent（电路解析器）
+  输入：用户自然语言需求
+  工具：搜索立创器件库、生成电路 JSON
+  输出：结构化电路描述 JSON → 返回给 Plugin
+```
+
+**后续迭代扩展方向：**
+```
+多 Agent 协作模式（未来）
+  ├── 需求解析 Agent   → 理解用户意图
+  ├── 元件搜索 Agent   → 查询立创商城可购买器件
+  ├── 布局规划 Agent   → 生成合理坐标布局
+  └── 验证 Agent       → 检查连接正确性
+```
+
+---
+
+### ADR-04：数据存储 — PostgreSQL + Redis
+
+**决策**：PostgreSQL 主存储，Redis 按需缓存
+
+| 存储层 | 用途 | 引入时机 |
+|--------|------|----------|
+| **PostgreSQL** | 电路模板库、用户历史对话、生成记录 | Sprint 1（核心功能） |
+| **Redis** | LLM 响应缓存（相同需求避免重复调用）、会话状态缓存 | 按需引入（性能优化阶段） |
+
+---
+
+### 完整技术栈总览
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                   立创 EDA 专业版 Pro                     │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │         EDA 插件（.eext 扩展包）                   │   │
+│  │                                                   │   │
+│  │  src/index.ts          iframe/index.html          │   │
+│  │  ─────────────         ──────────────────         │   │
+│  │  EDA SDK API 调用       AI 对话 UI（HTML/JS）       │   │
+│  │  sch_PrimitiveComponent  fetch → Backend API      │   │
+│  │  sch_PrimitiveWire       postMessage ←→ 主线程     │   │
+│  │  lib_Device.search()                              │   │
+│  │                                                   │   │
+│  │  构建：TypeScript + ESBuild → *.eext               │   │
+│  └──────────────────────────────────────────────────┘   │
+└─────────────────┬───────────────────────────────────────┘
+                  │ HTTP (from IFrame)
+                  ▼
+┌─────────────────────────────────────────────────────────┐
+│              后端 AI 服务（ASP.NET Core）                  │
+│                                                         │
+│  ┌─────────────────────────────────────────────┐        │
+│  │   Microsoft Agent Framework (.NET 10)        │        │
+│  │   └── 电路解析 Agent                         │        │
+│  │       ├── Tool: 立创器件库搜索                │        │
+│  │       └── Tool: 电路 JSON 生成               │        │
+│  └─────────────────────────────────────────────┘        │
+│                    │                                     │
+│  OpenAI 兼容 SDK   │   PostgreSQL    Redis               │
+│  (Azure.AI.OpenAI) │   (电路模板/历史) (缓存/会话)         │
+└────────────────────┼─────────────────────────────────────┘
+                     │
+                     ▼
+            LLM（OpenAI / Azure OpenAI / 自托管）
+```
+
+### Plugin 侧启动模板
+
+- **模板来源**：官方 `pro-api-sdk`（`github.com/easyeda/pro-api-sdk`）
+- **IFrame UI**：POC 阶段使用原生 HTML/CSS/JS → 迭代期引入 Vue 3（按需）
+- **类型支持**：`@jlceda/pro-api-types`（NPM）
+
+### 开发优先级原则
+
+> **优先插件基础能力**：先跑通"对话输入 → 生成原理图"核心链路；UI 交互和控件细节随功能迭代逐步完善。
+
+| 阶段 | 重点 | UI 要求 |
+|------|------|---------|
+| POC | 插件主线程 + IFrame 通信 + EDA SDK 放置器件 | 最简文本输入框 |
+| Sprint 1 | 后端 API + Agent + LLM 接入 + 元件搜索 | 基础对话 UI |
+| Sprint 2+ | 多轮对话、元件验证、错误提示、自动布局 | 完善交互控件 |
