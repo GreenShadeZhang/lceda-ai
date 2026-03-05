@@ -1,7 +1,14 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using AiSchGeneratorApi.Infrastructure.Data;
+using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// EF Core + PostgreSQL (snake_case naming via EFCore.NamingConventions)
+builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseNpgsql(builder.Configuration.GetConnectionString("Default"))
+           .UseSnakeCaseNamingConvention());
 
 // Controllers with camelCase JSON serialization
 builder.Services.AddControllers()
