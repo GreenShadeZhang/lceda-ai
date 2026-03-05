@@ -1,5 +1,7 @@
 ---
-stepsCompleted: [1, 2, 3]
+stepsCompleted: [1, 2, 3, 4]
+status: 'complete'
+completedAt: '2026-03-05'
 inputDocuments:
   - product-brief-ai-eda-schematic-generator-2026-03-05.md
   - architecture.md
