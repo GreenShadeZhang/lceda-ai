@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using AiSchGeneratorApi.Infrastructure.Data;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -31,6 +32,17 @@ if (builder.Environment.IsDevelopment())
     });
 }
 
+// Keycloak JWT Bearer authentication (ADR-05)
+// JWKS 自动从 {Authority}/.well-known/openid-configuration 获取，无需手动配置公钥
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.Authority = builder.Configuration["Keycloak:Authority"];
+        options.Audience  = builder.Configuration["Keycloak:Audience"];
+        options.RequireHttpsMetadata = true;
+    });
+builder.Services.AddAuthorization();
+
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
@@ -38,6 +50,7 @@ if (app.Environment.IsDevelopment())
     app.UseCors();
 }
 
+app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();

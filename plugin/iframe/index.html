@@ -20,6 +20,13 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
+    }
+
+    /* ---- 登录区域 ---- */
+    #login-section {
+      display: none;
+      flex-direction: column;
+      align-items: center;
       gap: 16px;
     }
 
@@ -33,11 +40,45 @@
       color: #89b4fa;
     }
 
-    p {
+    .subtitle {
       font-size: 14px;
       color: #6c7086;
       text-align: center;
       max-width: 280px;
+    }
+
+    #btn-login {
+      margin-top: 8px;
+      padding: 10px 28px;
+      background: #89b4fa;
+      color: #1e1e2e;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    #btn-login:hover {
+      background: #b4d0fb;
+    }
+
+    /* ---- 应用区域 ---- */
+    #app-section {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      width: 100%;
+      height: 100%;
+      padding: 16px;
+    }
+
+    .app-placeholder {
+      font-size: 13px;
+      color: #6c7086;
+      text-align: center;
     }
 
     .badge {
@@ -48,13 +89,54 @@
       border-radius: 12px;
       border: 1px solid #45475a;
     }
+
+    /* ---- 加载状态 ---- */
+    #loading-section {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      color: #6c7086;
+      font-size: 13px;
+    }
+
+    .spinner {
+      width: 24px;
+      height: 24px;
+      border: 3px solid #313244;
+      border-top-color: #89b4fa;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
   </style>
 </head>
 <body>
-  <div class="icon">🔌</div>
-  <h1>AI 原理图生成器</h1>
-  <p>Story 3 将在此处实现 AI 对话界面与原理图生成功能</p>
-  <span class="badge">功能开发中... v0.1.0</span>
+
+  <!-- 初始加载态：等待主线程返回 auth 状态 -->
+  <div id="loading-section">
+    <div class="spinner"></div>
+    <span>正在验证登录状态...</span>
+  </div>
+
+  <!-- 未登录：展示登录引导 -->
+  <div id="login-section">
+    <div class="icon">🔐</div>
+    <h1>AI 原理图生成器</h1>
+    <p class="subtitle">请先登录 maker-community 账号以使用 AI 生成功能</p>
+    <button id="btn-login">登录 / Login</button>
+  </div>
+
+  <!-- 已登录：主应用 UI（Story 3 填充） -->
+  <div id="app-section">
+    <h1>AI 原理图生成器</h1>
+    <p class="app-placeholder">Story 3 将在此处实现 AI 对话界面与原理图生成功能</p>
+    <span class="badge">已登录 · v0.1.0</span>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>

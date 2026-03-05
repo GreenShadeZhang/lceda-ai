@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>登录回调处理中...</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #1e1e2e;
+      color: #cdd6f4;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+    }
+    .spinner {
+      width: 32px; height: 32px;
+      border: 3px solid #313244;
+      border-top-color: #89b4fa;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .status { font-size: 14px; color: #6c7086; }
+    .error   { color: #f38ba8; }
+  </style>
+</head>
+<body>
+  <div class="spinner" id="spinner"></div>
+  <p class="status" id="status-msg">正在处理登录回调...</p>
+
+  <script>
+    /**
+     * callback.html — OIDC Authorization Code 回调处理（Story 2.1）
+     *
+     * 流程：
+     *   1. 从 URL query params 读取 code、state
+     *   2. 从 sessionStorage 读取 code_verifier（PKCE）、state（CSRF 防止）
+     *   3. POST 到 Keycloak token endpoint 换取 access_token + refresh_token
+     *   4. postMessage AUTH_SUCCESS 到主线程（window.parent）
+     *   5. 跳回 index.html（主应用 UI）
+     *
+     * 错误处理：
+     *   - URL 携带 error 参数（用户取消或 Keycloak 错误）→ postMessage AUTH_FAILURE
+     *   - token 换取失败 → postMessage AUTH_FAILURE + 页面展示错误信息
+     */
+
+    const KEYCLOAK_AUTHORITY = 'https://auth.verdure-hiro.cn/realms/maker-community';
+    const CLIENT_ID          = 'lceda-ai';
+    const TOKEN_ENDPOINT     = `${KEYCLOAK_AUTHORITY}/protocol/openid-connect/token`;
+
+    function setStatus(msg, isError = false) {
+      const el = document.getElementById('status-msg');
+      el.textContent = msg;
+      if (isError) {
+        el.classList.add('error');
+        document.getElementById('spinner').style.display = 'none';
+      }
+    }
+
+    function handleError(error, description) {
+      console.error('[ai-sch-generator/callback] auth error:', error, description);
+      window.parent.postMessage(
+        { type: 'AUTH_FAILURE', error: error, errorDescription: description || '' },
+        '*',
+      );
+      setStatus(`登录失败：${description || error}`, true);
+    }
+
+    async function handleCallback() {
+      const params = new URLSearchParams(window.location.search);
+
+      // 检查 Keycloak 返回的错误（如用户取消登录）
+      const errorParam = params.get('error');
+      if (errorParam) {
+        handleError(errorParam, params.get('error_description'));
+        return;
+      }
+
+      const code  = params.get('code');
+      const state = params.get('state');
+
+      if (!code) {
+        handleError('missing_code', '回调 URL 中缺少 authorization code');
+        return;
+      }
+
+      // 取出 PKCE 中间态（由 app.js 在导航前写入）
+      const codeVerifier   = sessionStorage.getItem('pkce_code_verifier');
+      const savedState     = sessionStorage.getItem('pkce_state');
+      const savedRedirect  = sessionStorage.getItem('pkce_redirect_uri');
+
+      // CSRF 校验：state 必须匹配
+      if (state && savedState && state !== savedState) {
+        handleError('state_mismatch', 'CSRF 校验失败，state 参数不匹配');
+        return;
+      }
+
+      if (!codeVerifier) {
+        handleError('missing_verifier', 'PKCE code_verifier 不存在，请重新登录');
+        return;
+      }
+
+      // 清除 sessionStorage 中间态（安全：不留 verifier）
+      sessionStorage.removeItem('pkce_code_verifier');
+      sessionStorage.removeItem('pkce_state');
+      sessionStorage.removeItem('pkce_redirect_uri');
+
+      const redirectUri = savedRedirect || new URL('callback.html', window.location.href).toString();
+
+      setStatus('正在换取 token...');
+
+      try {
+        const response = await fetch(TOKEN_ENDPOINT, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body:    new URLSearchParams({
+            grant_type:    'authorization_code',
+            client_id:     CLIENT_ID,
+            code,
+            code_verifier: codeVerifier,
+            redirect_uri:  redirectUri,
+          }),
+        });
+
+        if (!response.ok) {
+          const errBody = await response.text();
+          throw new Error(`token_request_failed (${response.status}): ${errBody}`);
+        }
+
+        const data = await response.json();
+
+        if (!data.access_token) {
+          throw new Error('token response missing access_token');
+        }
+
+        setStatus('登录成功，正在跳转...');
+
+        // 通知主线程（index.ts）保存 token 到 eda.sys_Storage
+        window.parent.postMessage(
+          {
+            type:         'AUTH_SUCCESS',
+            accessToken:  data.access_token,
+            refreshToken: data.refresh_token || null,
+          },
+          '*',
+        );
+
+        // 跳回主应用 UI（app.js 会收到主线程的 AUTH_TOKEN_SYNC 后切换到 appUI）
+        window.location.replace(new URL('index.html', window.location.href).toString());
+
+      } catch (err) {
+        handleError('token_exchange_failed', err.message);
+      }
+    }
+
+    handleCallback();
+  </script>
+</body>
+</html>

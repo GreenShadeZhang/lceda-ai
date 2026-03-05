@@ -11,13 +11,14 @@
 
 export const MSG = {
   // IFrame → 主线程
-  AUTH_SUCCESS: 'AUTH_SUCCESS',
-  AUTH_FAILURE: 'AUTH_FAILURE',
-  GENERATE_REQUEST: 'GENERATE_REQUEST',
+  AUTH_SUCCESS:         'AUTH_SUCCESS',
+  AUTH_FAILURE:         'AUTH_FAILURE',
+  GENERATE_REQUEST:     'GENERATE_REQUEST',
+  REQUEST_AUTH_STATUS:  'REQUEST_AUTH_STATUS',   // IFrame 加载时主动请求当前 token
   // 主线程 → IFrame
-  AUTH_TOKEN_SYNC: 'AUTH_TOKEN_SYNC',
-  GENERATE_RESULT: 'GENERATE_RESULT',
-  GENERATE_ERROR: 'GENERATE_ERROR',
+  AUTH_TOKEN_SYNC:      'AUTH_TOKEN_SYNC',
+  GENERATE_RESULT:      'GENERATE_RESULT',
+  GENERATE_ERROR:       'GENERATE_ERROR',
 } as const;
 
 /** 所有消息类型的联合类型 */
@@ -48,11 +49,16 @@ export interface GenerateRequestMessage {
   authToken: string;
 }
 
-/** 主线程 → IFrame：token 刷新同步 */
+/** IFrame → 主线程：加载时请求主线程同步当前 token 状态 */
+export interface RequestAuthStatusMessage {
+  type: typeof MSG.REQUEST_AUTH_STATUS;
+}
+
+/** 主线程 → IFrame：token 同步（首次加载 + 静默刷新后回写） */
 export interface AuthTokenSyncMessage {
   type: typeof MSG.AUTH_TOKEN_SYNC;
-  accessToken: string;
-  refreshToken: string;
+  accessToken: string | null;
+  refreshToken: string | null;
 }
 
 /** 主线程 → IFrame：原理图生成结果 */
