@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using AiSchGeneratorApi.Contracts;
 using AiSchGeneratorApi.Infrastructure.Data;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
@@ -40,6 +41,24 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         options.Authority = builder.Configuration["Keycloak:Authority"];
         options.Audience  = builder.Configuration["Keycloak:Audience"];
         options.RequireHttpsMetadata = true;
+
+        // 返回统一格式的 401 响应体 (Story 2.3 AC)
+        options.Events = new JwtBearerEvents
+        {
+            OnChallenge = async context =>
+            {
+                context.HandleResponse();
+                context.Response.StatusCode  = StatusCodes.Status401Unauthorized;
+                context.Response.ContentType = "application/json";
+                var body = ApiResponse<object>.Fail("AUTH_REQUIRED", "Authentication is required. Provide a valid Bearer token.");
+                await context.Response.WriteAsync(
+                    JsonSerializer.Serialize(body, new JsonSerializerOptions
+                    {
+                        PropertyNamingPolicy        = JsonNamingPolicy.CamelCase,
+                        DefaultIgnoreCondition      = JsonIgnoreCondition.WhenWritingNull,
+                    }));
+            }
+        };
     });
 builder.Services.AddAuthorization();
 
