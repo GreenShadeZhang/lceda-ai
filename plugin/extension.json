@@ -1,21 +1,31 @@
 {
   "name": "ai-sch-generator",
-  "uuid": "f7a3c912-4d8e-4b1f-9e6a-2c5d3f807b14",
+  "uuid": "6d3ec3aea4da468c9b54a3cfa7ecd996",
   "displayName": "AI 原理图生成器",
-  "version": "0.1.0",
   "description": "通过自然语言描述自动生成立创EDA原理图的AI插件",
-  "entry": "./dist/index",
+  "version": "0.1.0",
+  "publisher": "verdure-hiro",
+  "engines": {
+    "eda": "^2.3.0"
+  },
+  "license": "MIT",
   "categories": "Schematic",
-  "activationEvents": ["onStartup"],
-  "headerMenus": [
-    {
-      "menuId": "sch",
-      "menus": [
-        {
-          "menuName": "AI 生成原理图",
-          "registerFn": "openAIPanel"
-        }
-      ]
-    }
-  ]
+  "activationEvents": {},
+  "entry": "./dist/index",
+  "dependentExtensions": {},
+  "headerMenus": {
+    "sch": [
+      {
+        "id": "ai-sch-generator",
+        "title": "AI 原理图生成器",
+        "menuItems": [
+          {
+            "id": "open-ai-panel",
+            "title": "AI 生成原理图",
+            "registerFn": "openAIPanel"
+          }
+        ]
+      }
+    ]
+  }
 }

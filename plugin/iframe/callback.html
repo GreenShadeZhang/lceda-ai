@@ -41,17 +41,39 @@
      *   1. 从 URL query params 读取 code、state
      *   2. 从 sessionStorage 读取 code_verifier（PKCE）、state（CSRF 防止）
      *   3. POST 到 Keycloak token endpoint 换取 access_token + refresh_token
-     *   4. postMessage AUTH_SUCCESS 到主线程（window.parent）
-     *   5. 跳回 index.html（主应用 UI）
+     *   4. 直接写入持久化存储（window.parent.eda.sys_Storage 或 localStorage 降级）
+     *   5. 跳回 index.html（app.js 从存储读取 token 后展示应用界面）
      *
      * 错误处理：
-     *   - URL 携带 error 参数（用户取消或 Keycloak 错误）→ postMessage AUTH_FAILURE
-     *   - token 换取失败 → postMessage AUTH_FAILURE + 页面展示错误信息
+     *   - URL 携带 error 参数（用户取消或 Keycloak 错误）→ 显示错误后跳回 index.html
+     *   - token 换取失败 → UI 展示错误信息后跳回 index.html
      */
 
     const KEYCLOAK_AUTHORITY = 'https://auth.verdure-hiro.cn/realms/maker-community';
     const CLIENT_ID          = 'lceda-ai';
     const TOKEN_ENDPOINT     = `${KEYCLOAK_AUTHORITY}/protocol/openid-connect/token`;
+
+    // -------------------------------------------------------------------------
+    // 持久化存储助手（与 app.js 保持一致：eda.sys_Storage 优先，localStorage 降级）
+    // -------------------------------------------------------------------------
+
+    function saveTokens(accessToken, refreshToken) {
+      try {
+        eda.sys_Storage.setExtensionUserConfig('ai_sch_access_token',  accessToken);
+        eda.sys_Storage.setExtensionUserConfig('ai_sch_refresh_token', refreshToken || '');
+        return;
+      } catch (_) { /* 降级处理 */ }
+      localStorage.setItem('ai_sch_access_token', accessToken);
+      localStorage.setItem('ai_sch_refresh_token', refreshToken || '');
+    }
+
+    function showEdaToast(message, type = 1) {
+      try {
+        eda.sys_ToastMessage.showMessage(message, type);
+        return;
+      } catch (_) { /* 降级处理 */ }
+      console.warn(`[Toast]: ${message}`);
+    }
 
     function setStatus(msg, isError = false) {
       const el = document.getElementById('status-msg');
@@ -64,11 +86,13 @@
 
     function handleError(error, description) {
       console.error('[ai-sch-generator/callback] auth error:', error, description);
-      window.parent.postMessage(
-        { type: 'AUTH_FAILURE', error: error, errorDescription: description || '' },
-        '*',
-      );
-      setStatus(`登录失败：${description || error}`, true);
+      const msg = `登录失败：${description || error}`;
+      showEdaToast(msg);
+      setStatus(msg, true);
+      // 3 秒后跳回主界面（app.js 检测到无 token 会展示登录界面）
+      setTimeout(() => {
+        window.location.replace(new URL('index.html', window.location.href).toString());
+      }, 3000);
     }
 
     async function handleCallback() {
@@ -140,17 +164,10 @@
 
         setStatus('登录成功，正在跳转...');
 
-        // 通知主线程（index.ts）保存 token 到 eda.sys_Storage
-        window.parent.postMessage(
-          {
-            type:         'AUTH_SUCCESS',
-            accessToken:  data.access_token,
-            refreshToken: data.refresh_token || null,
-          },
-          '*',
-        );
+        // 直接写入持久化存储，无需经过主线程
+        saveTokens(data.access_token, data.refresh_token || null);
 
-        // 跳回主应用 UI（app.js 会收到主线程的 AUTH_TOKEN_SYNC 后切换到 appUI）
+        // 跳回主应用 UI（app.js 加载时从存储读取 token 后展示 appUI）
         window.location.replace(new URL('index.html', window.location.href).toString());
 
       } catch (err) {

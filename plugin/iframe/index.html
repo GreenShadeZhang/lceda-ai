@@ -68,27 +68,219 @@
     #app-section {
       display: none;
       flex-direction: column;
-      align-items: center;
-      gap: 16px;
       width: 100%;
       height: 100%;
-      padding: 16px;
+      overflow: hidden;
     }
 
-    .app-placeholder {
+    .app-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      background: #181825;
+      border-bottom: 1px solid #313244;
+      flex-shrink: 0;
+    }
+
+    .app-title {
       font-size: 13px;
-      color: #6c7086;
-      text-align: center;
+      font-weight: 600;
+      color: #89b4fa;
     }
 
-    .badge {
-      font-size: 11px;
-      background: #313244;
-      color: #a6adc8;
+    .btn-small {
       padding: 4px 10px;
-      border-radius: 12px;
-      border: 1px solid #45475a;
+      background: transparent;
+      color: #f38ba8;
+      border: 1px solid #f38ba8;
+      border-radius: 6px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.2s;
     }
+
+    .btn-small:hover { background: rgba(243,139,168,0.1); }
+
+    #chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-height: 0;
+    }
+
+    .chat-msg {
+      display: flex;
+      max-width: 88%;
+    }
+
+    .chat-msg-user {
+      align-self: flex-end;
+    }
+
+    .chat-msg-ai {
+      align-self: flex-start;
+    }
+
+    .chat-bubble {
+      padding: 8px 12px;
+      border-radius: 12px;
+      font-size: 13px;
+      line-height: 1.5;
+      word-break: break-word;
+      white-space: pre-wrap;
+    }
+
+    .chat-msg-user .chat-bubble {
+      background: #89b4fa;
+      color: #1e1e2e;
+      border-radius: 12px 12px 4px 12px;
+    }
+
+    .chat-msg-ai .chat-bubble {
+      background: #313244;
+      color: #cdd6f4;
+      border-radius: 4px 12px 12px 12px;
+    }
+
+    .chat-msg-ai .chat-bubble.error {
+      color: #f38ba8;
+    }
+
+    .input-area {
+      display: flex;
+      gap: 8px;
+      padding: 8px 10px;
+      background: #181825;
+      border-top: 1px solid #313244;
+      flex-shrink: 0;
+      align-items: flex-end;
+    }
+
+    #user-input {
+      flex: 1;
+      background: #2a2a3e;
+      border: 1px solid #45475a;
+      border-radius: 8px;
+      color: #cdd6f4;
+      font-size: 13px;
+      padding: 7px 10px;
+      resize: none;
+      font-family: inherit;
+      line-height: 1.4;
+      min-height: 60px;
+      max-height: 100px;
+    }
+
+    #user-input:focus {
+      outline: none;
+      border-color: #89b4fa;
+    }
+
+    #user-input::placeholder {
+      color: #585b70;
+    }
+
+    .btn-primary {
+      padding: 8px 14px;
+      background: #89b4fa;
+      color: #1e1e2e;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+      white-space: nowrap;
+      flex-shrink: 0;
+      align-self: flex-end;
+    }
+
+    .btn-primary:hover { background: #b4d0fb; }
+    .btn-primary:disabled { background: #45475a; color: #585b70; cursor: not-allowed; }
+
+    #gen-status {
+      font-size: 11px;
+      color: #6c7086;
+      padding: 2px 12px 4px;
+      min-height: 18px;
+      background: #181825;
+      border-top: 1px solid #313244;
+      flex-shrink: 0;
+    }
+
+    /* ---- 设备授权区域 ---- */
+    #device-section {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+
+    #qr-image {
+      display: none;
+      width: 180px;
+      height: 180px;
+      border-radius: 8px;
+    }
+
+    .user-code-label {
+      font-size: 12px;
+      color: #6c7086;
+      margin-top: 4px;
+    }
+
+    #user-code-display {
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: 4px;
+      color: #cdd6f4;
+      background: #313244;
+      padding: 8px 20px;
+      border-radius: 8px;
+      font-family: monospace;
+    }
+
+    #device-status {
+      font-size: 12px;
+      color: #6c7086;
+      min-height: 18px;
+    }
+
+    .device-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 4px;
+    }
+
+    .btn-secondary {
+      padding: 8px 16px;
+      background: #313244;
+      color: #cdd6f4;
+      border: 1px solid #45475a;
+      border-radius: 8px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .btn-secondary:hover { background: #45475a; }
+
+    .btn-cancel {
+      padding: 8px 16px;
+      background: transparent;
+      color: #f38ba8;
+      border: 1px solid #f38ba8;
+      border-radius: 8px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-cancel:hover { background: #f38ba822; }
 
     /* ---- 加载状态 ---- */
     #loading-section {
@@ -122,19 +314,72 @@
     <span>正在验证登录状态...</span>
   </div>
 
+  <!-- 调试日志面板（排查完后可删除） -->
+  <div id="debug-log" style="
+    position:fixed; bottom:0; left:0; right:0;
+    background:#1a1a2e; color:#a6e3a1; font-size:11px;
+    font-family:monospace; padding:6px 8px; max-height:160px;
+    overflow-y:auto; border-top:1px solid #313244; z-index:9999;
+  ">▶ [HTML] debug-log div 已渲染</div>
+
+  <script>
+    // 最早执行的内联诊断 —— 如果连这里都看不到，说明 iframe 连内联脚本都不跑
+    (function() {
+      var el = document.getElementById('debug-log');
+      function idbg(msg) {
+        if (el) { var d = document.createElement('div'); d.textContent = '▶ ' + msg; el.appendChild(d); el.scrollTop = el.scrollHeight; }
+      }
+      idbg('[inline-script] 内联脚本已执行');
+      idbg('[inline-script] typeof eda = ' + typeof eda);
+      idbg('[inline-script] typeof window.parent = ' + typeof window.parent);
+      try { idbg('[inline-script] window.parent.eda = ' + typeof window.parent.eda); } catch(e) { idbg('[inline-script] window.parent.eda 访问出错: ' + e); }
+      idbg('[inline-script] window.location.href = ' + window.location.href);
+      // 捕获 app.js 的崩溃错误
+      window.onerror = function(msg, src, line, col, err) {
+        idbg('[onerror] ' + msg + ' @ ' + src + ':' + line + ':' + col);
+        if (err) idbg('[onerror] stack: ' + err.stack);
+        return false;
+      };
+      window.onunhandledrejection = function(e) {
+        idbg('[unhandledrejection] ' + (e.reason || e));
+      };
+    })();
+  </script>
+
   <!-- 未登录：展示登录引导 -->
   <div id="login-section">
     <div class="icon">🔐</div>
     <h1>AI 原理图生成器</h1>
-    <p class="subtitle">请先登录 maker-community 账号以使用 AI 生成功能</p>
-    <button id="btn-login">登录 / Login</button>
+    <p class="subtitle">请扫码登录 maker-community 账号以使用 AI 生成功能</p>
+    <button id="btn-login">扫码登录</button>
   </div>
 
-  <!-- 已登录：主应用 UI（Story 3 填充） -->
+  <!-- 设备授权流程：QR 码 + 验证码 + 轮询状态 -->
+  <div id="device-section">
+    <h1>扫码授权</h1>
+    <img id="qr-image" alt="授权二维码" />
+    <div class="user-code-label">或手动输入验证码：</div>
+    <div id="user-code-display">------</div>
+    <div id="device-status">等待扫描授权...</div>
+    <div class="device-actions">
+      <button id="btn-open-browser" class="btn-secondary">在浏览器中打开</button>
+      <button id="btn-cancel-device" class="btn-cancel">取消</button>
+    </div>
+  </div>
+
+  <!-- 已登录：AI 对话主界面 -->
   <div id="app-section">
-    <h1>AI 原理图生成器</h1>
-    <p class="app-placeholder">Story 3 将在此处实现 AI 对话界面与原理图生成功能</p>
-    <span class="badge">已登录 · v0.1.0</span>
+    <div class="app-header">
+      <span class="app-title">🤖 AI 原理图生成器</span>
+      <button id="logout-btn" class="btn-small">退出登录</button>
+    </div>
+    <div id="chat-messages"></div>
+    <div class="input-area">
+      <textarea id="user-input" rows="3"
+        placeholder="描述您需要的电路，例如：5V 转 3.3V LDO 供电模块&#10;Ctrl+Enter 发送"></textarea>
+      <button id="generate-btn" class="btn-primary">生成原理图</button>
+    </div>
+    <div id="gen-status"></div>
   </div>
 
   <script src="app.js"></script>

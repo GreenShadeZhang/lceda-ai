@@ -29,7 +29,7 @@ async function main() {
     platform: 'browser',
     target: 'es2020',
     format: 'iife',
-    // 不设置 globalName，EDA 平台通过自身 loader 识别 registerFn
+    globalName: 'edaEsbuildExportName', // EDA 运行时固定查找此全局变量名
     logLevel: 'info',
   });
   console.log('✅ TypeScript → JavaScript 编译完成');
@@ -41,7 +41,42 @@ async function main() {
   const eextName = `${extConfig.name}-${extConfig.version}.eext`;
   const eextPath = path.join(DIST_DIR, eextName);
 
-  // 4. 打包为 .eext（ZIP 文件）
+  // 4. 用 esbuild 打包 app.js（含 npm 依赖，如 qrcode），然后内联到 index.html
+  const iframeDir = path.join(ROOT, 'iframe');
+  const htmlSrc = path.join(iframeDir, 'index.html');
+  const jsSrc   = path.join(iframeDir, 'app.js');
+
+  let htmlContent = fs.readFileSync(htmlSrc, 'utf-8');
+
+  // 使用 esbuild 打包（write:false，不写文件，直接拿 outputFiles[0].text）
+  const appBundleResult = await esbuild.build({
+    entryPoints: [jsSrc],
+    bundle:      true,
+    write:       false,
+    platform:    'browser',
+    target:      'es2020',
+    format:      'iife',
+    logLevel:    'warning',
+  });
+  const jsContent = appBundleResult.outputFiles[0].text;
+
+  // 将 <script src="app.js"></script> 替换为内联 <script>...内容...</script>
+  htmlContent = htmlContent.replace(
+    /<script\s+src=["']app\.js["']\s*><\/script>/,
+    `<script>\n${jsContent}\n</script>`
+  );
+
+  // 去除调试面板和内联诊断脚本（生产包不需要）
+  // 如需保留调试，将下面两行注释掉
+  htmlContent = htmlContent.replace(
+    /\s*<!-- 调试日志面板[\s\S]*?<\/script>/,
+    ''
+  );
+
+  const inlinedHtml = path.join(BUILD_DIR, '_index_inlined.html');
+  fs.writeFileSync(inlinedHtml, htmlContent, 'utf-8');
+
+  // 5. 打包为 .eext（ZIP 文件）
   // ZIP 内部结构：
   //   extension.json        ← 插件配置
   //   dist/index.js         ← 编译后的 JS（entry: "./dist/index"）
@@ -61,8 +96,13 @@ async function main() {
     // 添加编译后 JS（ZIP 内路径：dist/index.js，与 extension.json entry 对应）
     archive.file(compiledJs, { name: 'dist/index.js' });
 
-    // 添加 iframe 目录（ZIP 内路径：iframe/）
-    archive.directory(path.join(ROOT, 'iframe'), 'iframe');
+    // 添加 iframe 目录：使用内联化后的 HTML（替换原版 index.html）
+    archive.file(inlinedHtml, { name: 'iframe/index.html' });
+    // callback.html 也需要内联（如果有外部脚本引用的话）
+    const callbackSrc = path.join(iframeDir, 'callback.html');
+    if (fs.existsSync(callbackSrc)) {
+      archive.file(callbackSrc, { name: 'iframe/callback.html' });
+    }
 
     archive.finalize();
   });

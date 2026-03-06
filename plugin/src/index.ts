@@ -4,107 +4,130 @@
  * 职责：
  *   - 注册菜单点击处理函数 openAIPanel（extension.json registerFn 对应）
  *   - 打开 IFrame 对话面板
- *   - 监听来自 IFrame 的 postMessage 消息
- *
- * Story 2.2：处理认证消息
- *   - REQUEST_AUTH_STATUS → 从 eda.sys_Storage 读取 token → AUTH_TOKEN_SYNC 回送 IFrame
- *   - AUTH_SUCCESS        → 存储 accessToken + refreshToken 到 eda.sys_Storage
- *   - AUTH_TOKEN_SYNC     → 静默刷新后主线程更新 eda.sys_Storage（IFrame 主动同步过来）
- *   - AUTH_FAILURE        → 清除存储、展示 Toast 提示登录过期
+ *   - 订阅 GENERATE_REQUEST MessageBus 消息，调用 EDA SDK 放置元件
  *
  * 重要限制（来自 architecture.md ADR）：
  *   ❌ 主线程禁止发起任何外部 HTTP 请求（浏览器安全策略）
- *   ❌ Token 不得使用 localStorage，只能存入 eda.sys_Storage
- *   ✅ 外部 fetch 调用必须在 IFrame（iframe/app.js）内发起
+ *   ❌ EDA 插件 VM 沙箱中没有 window 对象，不能调用 window.addEventListener
+ *   ✅ eda.sys_MessageBus.subscribe() 可在主线程使用（EDA 平台 API，非浏览器 API）
+ *   ✅ eda.sch_PrimitiveComponent / eda.lib_Device 等原理图 API 在主线程可用
  *
  * [Source: architecture.md#立创EDA 插件 SDK 技术调研]
  */
 
-import { MSG, AuthSuccessMessage, AuthFailureMessage, AuthTokenSyncMessage } from './messageTypes';
+const MSG_GENERATE_REQUEST = 'GENERATE_REQUEST';
+const MSG_GENERATE_RESULT  = 'GENERATE_RESULT';
+const MSG_GENERATE_ERROR   = 'GENERATE_ERROR';
 
-// IFrame 窗口引用（用于主线程 → IFrame 的 postMessage）
-let iframeWindow: WindowProxy | null = null;
+let messageBusInitialized = false;
 
 /**
- * 打开 AI 原理图生成器 IFrame 面板（Story 1.1 + Story 2.2 更新：检查已有 token）
+ * 打开 AI 原理图生成器 IFrame 面板，并首次调用时初始化 MessageBus 订阅
  */
 export function openAIPanel(): void {
-  console.log('[ai-sch-generator] openAIPanel triggered');
-  eda.sys_IFrame.openIFrame('/iframe/index.html', 700, 500);
+  if (!messageBusInitialized) {
+    messageBusInitialized = true;
+    initMessageBusHandlers();
+  }
+  eda.sys_IFrame.openIFrame('/iframe/index.html', 700, 500, undefined, {
+    title: 'AI 原理图生成器',
+  });
 }
 
 /**
- * 处理来自 IFrame 的 postMessage 消息
+ * 初始化 MessageBus 订阅：接收 IFrame 发来的 GENERATE_REQUEST
  */
-export async function onMessage(event: MessageEvent): Promise<void> {
-  if (!event.data || typeof event.data.type !== 'string') {
-    return;
-  }
-
-  // 保存 iframe 窗口引用（用于回复消息）
-  if (event.source) {
-    iframeWindow = event.source as WindowProxy;
-  }
-
-  const type = event.data.type as string;
-  console.log('[ai-sch-generator] received message:', type);
-
-  switch (type) {
-    // ---- IFrame 加载时请求当前 token 状态 ----
-    case MSG.REQUEST_AUTH_STATUS: {
-      const accessToken  = await eda.sys_Storage.getItem('access_token');
-      const refreshToken = await eda.sys_Storage.getItem('refresh_token');
-      (event.source as WindowProxy).postMessage(
-        { type: MSG.AUTH_TOKEN_SYNC, accessToken: accessToken || null, refreshToken: refreshToken || null },
-        '*',
-      );
-      break;
+function initMessageBusHandlers(): void {
+  eda.sys_MessageBus.subscribe(MSG_GENERATE_REQUEST, async (circuitJson: any) => {
+    try {
+      const placedCount = await placeCircuitOnCanvas(circuitJson);
+      eda.sys_MessageBus.publish(MSG_GENERATE_RESULT, { placedCount });
+    } catch (e: any) {
+      const msg = e?.message || String(e);
+      eda.sys_ToastMessage.showMessage(`原理图放置失败: ${msg}`, 0 as any);
+      eda.sys_MessageBus.publish(MSG_GENERATE_ERROR, { message: msg });
     }
-
-    // ---- PKCE 登录成功：callback.html 换取 token 后回送 ----
-    case MSG.AUTH_SUCCESS: {
-      const authMsg = event.data as AuthSuccessMessage;
-      await eda.sys_Storage.setItem('access_token',  authMsg.accessToken);
-      await eda.sys_Storage.setItem('refresh_token', authMsg.refreshToken ?? '');
-      console.log('[ai-sch-generator] token 已存储到 eda.sys_Storage');
-      // 登录后 iframe 会跳回 index.html，index.html 的 app.js 加载时会再次 REQUEST_AUTH_STATUS
-      break;
-    }
-
-    // ---- 静默刷新后 IFrame 将新 token 回写主线程 ----
-    case MSG.AUTH_TOKEN_SYNC: {
-      const syncMsg = event.data as AuthTokenSyncMessage;
-      if (syncMsg.accessToken) {
-        await eda.sys_Storage.setItem('access_token',  syncMsg.accessToken);
-        await eda.sys_Storage.setItem('refresh_token', syncMsg.refreshToken ?? '');
-      }
-      break;
-    }
-
-    // ---- 登录失败或 refresh_token 过期 ----
-    case MSG.AUTH_FAILURE: {
-      const failMsg = event.data as AuthFailureMessage;
-      // 清除已存储的失效 token
-      await eda.sys_Storage.removeItem('access_token');
-      await eda.sys_Storage.removeItem('refresh_token');
-      // 展示 Toast 提示（session_expired 时给用户友好提示）
-      if (failMsg.error === 'session_expired') {
-        eda.sys_ToastMessage.showToast('登录已过期，请重新登录', 'warning');
-      }
-      break;
-    }
-
-    case MSG.GENERATE_REQUEST:
-      // TODO Story 3.4: 接收电路 JSON，调用 EDA SDK 放置器件
-      break;
-
-    default:
-      break;
-  }
+  });
 }
 
-// 注册 postMessage 监听器（插件激活即开始监听）
-window.addEventListener('message', onMessage);
+/**
+ * Story 3.4: 调用 EDA SDK 将电路 JSON 放置到原理图画布
+ * [Source: architecture.md#ADR-09 电路 JSON 数据契约]
+ */
+async function placeCircuitOnCanvas(circuitJson: any): Promise<number> {
+  const components: any[] = circuitJson?.components || [];
+  const netFlags:   any[] = circuitJson?.net_flags  || [];
+  const wires:      any[] = circuitJson?.wires       || [];
 
-console.log('[ai-sch-generator] 插件已激活，等待菜单点击...');
+  let placedCount = 0;
+
+  // 1. 放置元件
+  for (const comp of components) {
+    try {
+      let deviceObj: any = null;
+
+      // 优先用 LCSC 编号精确获取
+      if (comp.lcsc) {
+        const list = await eda.lib_Device.getByLcscIds([comp.lcsc], undefined);
+        if (list && list.length > 0) deviceObj = list[0];
+      }
+
+      // 降级：按名称搜索
+      if (!deviceObj && comp.name) {
+        const list = await eda.lib_Device.search(comp.name, undefined, undefined, undefined, 5, 1);
+        if (list && list.length > 0) deviceObj = list[0];
+      }
+
+      if (!deviceObj) {
+        eda.sys_ToastMessage.showMessage(`元件未找到：${comp.ref || comp.name}，已跳过`, 0 as any);
+        continue;
+      }
+
+      await eda.sch_PrimitiveComponent.create(
+        deviceObj,
+        comp.x        ?? 100,
+        comp.y        ?? 100,
+        undefined,
+        comp.rotation ?? 0,
+        false,
+        comp.add_to_bom !== false,
+        comp.add_to_pcb !== false,
+      );
+      placedCount++;
+    } catch (e: any) {
+      eda.sys_ToastMessage.showMessage(
+        `放置失败: ${comp.ref || comp.name} - ${e?.message || e}`, 0 as any);
+    }
+  }
+
+  // 2. 放置网络标识（GND、VCC 等）
+  for (const nf of netFlags) {
+    try {
+      await eda.sch_PrimitiveComponent.createNetFlag(
+        nf.type ?? 'Ground',
+        nf.net  ?? 'GND',
+        nf.x    ?? 100,
+        nf.y    ?? 200,
+      );
+    } catch (_) {}
+  }
+
+  // 3. 绘制连线
+  for (const wire of wires) {
+    try {
+      if (wire.points && wire.points.length >= 2) {
+        await eda.sch_PrimitiveWire.create(wire.points);
+      }
+    } catch (_) {}
+  }
+
+  // 4. 保存文档
+  try {
+    await eda.sch_Document.save();
+  } catch (e: any) {
+    eda.sys_ToastMessage.showMessage(`保存失败: ${e?.message || e}`, 0 as any);
+  }
+
+  return placedCount;
+}
 
