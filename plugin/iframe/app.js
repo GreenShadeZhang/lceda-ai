@@ -667,9 +667,10 @@ async function handleJsonResponse(data, bubbleEl) {
 async function notifyMainThreadToPlace(circuitJson, bubbleEl, prevText) {
   dbg('publishing GENERATE_REQUEST to MessageBus...');
   const compCount = (circuitJson.components || []).length;
+  const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 
   try {
-    eda.sys_MessageBus.publish(MSG_GENERATE_REQUEST, circuitJson);
+    eda.sys_MessageBus.publish(MSG_GENERATE_REQUEST, { requestId, circuitJson });
   } catch (e) {
     dbg('MessageBus publish failed:', e);
     throw new Error('无法发送给主线程（MessageBus 不可用）: ' + e.message);
@@ -682,12 +683,36 @@ async function notifyMainThreadToPlace(circuitJson, bubbleEl, prevText) {
   // 非阻塞等待主线程结果（至多 5 秒）；超时视为成功，主线程已独立完成放置
   let gotResponse = false;
   await new Promise((resolve) => {
-    const timer = setTimeout(resolve, 5_000);
+    let resultSub = null;
+    let errorSub = null;
+
+    const cleanup = () => {
+      try { if (resultSub) resultSub.cancel(); } catch (_) {}
+      try { if (errorSub) errorSub.cancel(); } catch (_) {}
+    };
+
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, 5_000);
 
     try {
-      eda.sys_MessageBus.subscribeOnce(MSG_GENERATE_RESULT, (result) => {
+      resultSub = eda.sys_MessageBus.subscribe(MSG_GENERATE_RESULT, (result) => {
+        if (result?.requestId && result.requestId !== requestId) return;
         clearTimeout(timer);
+        cleanup();
         gotResponse = true;
+
+        if (result?.skipped) {
+          const skipLog = Array.isArray(result?.log) && result.log.length > 0
+            ? `\n${result.log[0]}`
+            : '';
+          updateBubble(bubbleEl, (prevText ? prevText + '\n' : '') +
+            `ℹ️ 已忽略重复绘制请求。${skipLog}`);
+          resolve(undefined);
+          return;
+        }
+
         const placed = result?.placedCount ?? compCount;
         const logLines = Array.isArray(result?.log) ? result.log : [];
         const logText = logLines.length > 0 ? '\n\n📋 日志：\n' + logLines.join('\n') : '';
@@ -697,8 +722,10 @@ async function notifyMainThreadToPlace(circuitJson, bubbleEl, prevText) {
         resolve(undefined);
       });
 
-      eda.sys_MessageBus.subscribeOnce(MSG_GENERATE_ERROR, (err) => {
+      errorSub = eda.sys_MessageBus.subscribe(MSG_GENERATE_ERROR, (err) => {
+        if (err?.requestId && err.requestId !== requestId) return;
         clearTimeout(timer);
+        cleanup();
         gotResponse = true;
         const msg = err?.message || String(err) || '元件放置部分失败';
         updateBubble(bubbleEl, (prevText ? prevText + '\n' : '') +
@@ -707,6 +734,7 @@ async function notifyMainThreadToPlace(circuitJson, bubbleEl, prevText) {
       });
     } catch (e) {
       clearTimeout(timer);
+      cleanup();
       resolve(undefined);
     }
   });

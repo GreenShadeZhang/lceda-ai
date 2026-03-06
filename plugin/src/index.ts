@@ -23,9 +23,47 @@ const MSG_DEBUG_RESULT     = 'DEBUG_RESULT';
 const MSG_CLEAR_CANVAS     = 'CLEAR_CANVAS';
 const MSG_CLEAR_RESULT     = 'CLEAR_RESULT';
 
+const DEDUPE_WINDOW_MS = 8000;
+
 // 保存 MessageBus 订阅任务，以便重新初始化时先取消旧订阅
 let subscriptionTasks: Array<{ cancel: () => void }> = [];
 let messageBusInitialized = false;
+let isPlacementRunning = false;
+let inFlightRequestId: string | null = null;
+let lastCompletedRequestId: string | null = null;
+let lastCompletedAt = 0;
+
+type GenerateRequestEnvelope = {
+  requestId?: string;
+  circuitJson?: any;
+};
+
+function makeLegacyRequestId(circuitJson: any): string {
+  try {
+    const comps = Array.isArray(circuitJson?.components) ? circuitJson.components : [];
+    const sample = comps.slice(0, 8).map((c: any) => `${c?.ref ?? ''}:${c?.lcsc ?? ''}:${c?.x ?? ''}:${c?.y ?? ''}`).join('|');
+    return `legacy:${comps.length}:${sample}`;
+  } catch {
+    return 'legacy:unknown';
+  }
+}
+
+function unpackGenerateRequest(payload: any): { requestId: string; circuitJson: any } {
+  const envelope = payload as GenerateRequestEnvelope;
+  if (envelope && typeof envelope === 'object' && envelope.circuitJson) {
+    return {
+      requestId: (typeof envelope.requestId === 'string' && envelope.requestId.trim())
+        ? envelope.requestId
+        : makeLegacyRequestId(envelope.circuitJson),
+      circuitJson: envelope.circuitJson,
+    };
+  }
+
+  return {
+    requestId: makeLegacyRequestId(payload),
+    circuitJson: payload,
+  };
+}
 
 /**
  * 打开 AI 原理图生成器 IFrame 面板，并首次调用时初始化 MessageBus 订阅
@@ -49,14 +87,59 @@ export function openAIPanel(): void {
  * 初始化 MessageBus 订阅：接收 IFrame 发来的 GENERATE_REQUEST
  */
 function initMessageBusHandlers(): void {
-  const t1 = eda.sys_MessageBus.subscribe(MSG_GENERATE_REQUEST, async (circuitJson: any) => {
+  const t1 = eda.sys_MessageBus.subscribe(MSG_GENERATE_REQUEST, async (payload: any) => {
+    const { requestId, circuitJson } = unpackGenerateRequest(payload);
+    const now = Date.now();
+
+    if (isPlacementRunning) {
+      if (inFlightRequestId === requestId) {
+        eda.sys_MessageBus.publish(MSG_GENERATE_RESULT, {
+          requestId,
+          skipped: true,
+          placedCount: 0,
+          log: [`跳过重复请求：${requestId}（当前请求仍在处理中）`],
+        });
+        return;
+      }
+
+      eda.sys_MessageBus.publish(MSG_GENERATE_ERROR, {
+        requestId,
+        message: `已有绘制任务进行中（${inFlightRequestId ?? 'unknown'}），请稍后重试`,
+      });
+      return;
+    }
+
+    if (
+      lastCompletedRequestId === requestId &&
+      now - lastCompletedAt < DEDUPE_WINDOW_MS
+    ) {
+      eda.sys_MessageBus.publish(MSG_GENERATE_RESULT, {
+        requestId,
+        skipped: true,
+        placedCount: 0,
+        log: [`跳过重复请求：${requestId}（${DEDUPE_WINDOW_MS}ms 内已完成）`],
+      });
+      return;
+    }
+
+    isPlacementRunning = true;
+    inFlightRequestId = requestId;
     try {
       const result = await placeCircuitOnCanvas(circuitJson);
-      eda.sys_MessageBus.publish(MSG_GENERATE_RESULT, { placedCount: result.placedCount, log: result.log });
+      eda.sys_MessageBus.publish(MSG_GENERATE_RESULT, {
+        requestId,
+        placedCount: result.placedCount,
+        log: result.log,
+      });
+      lastCompletedRequestId = requestId;
+      lastCompletedAt = Date.now();
     } catch (e: any) {
       const msg = e?.message || String(e);
       eda.sys_ToastMessage.showMessage(`原理图放置失败: ${msg}`, 0 as any);
-      eda.sys_MessageBus.publish(MSG_GENERATE_ERROR, { message: msg });
+      eda.sys_MessageBus.publish(MSG_GENERATE_ERROR, { requestId, message: msg });
+    } finally {
+      isPlacementRunning = false;
+      inFlightRequestId = null;
     }
   });
 
@@ -161,93 +244,64 @@ async function placeCircuitOnCanvas(circuitJson: any): Promise<{ placedCount: nu
   for (const comp of components) {
     const label = comp.ref || comp.value || comp.name || '未知';
     try {
-      let deviceObj: any = null;
+      let deviceUuid: string | null = null;
       let method = '';
 
-      // 辅助：从搜索结果提取 {libraryUuid, uuid} 用于创建
-      const extractIds = (item: any): { libraryUuid: string; uuid: string } | null => {
-        if (item?.uuid && item?.libraryUuid) return { libraryUuid: item.libraryUuid, uuid: item.uuid };
-        return null;
-      };
-
-      // 1. 优先用 LCSC 编号
+      // 1. 优先用 LCSC 编号，仅读取 uuid，不直接 create
       if (comp.lcsc) {
         const list = await eda.lib_Device.getByLcscIds([comp.lcsc], undefined);
         L(`${label}: getByLcscIds(${comp.lcsc}) → ${list?.length ?? 0} 结果`);
         if (list && list.length > 0) {
           const item = list[0];
           L(`${label}: SearchItem uuid=${item.uuid}, libUuid=${item.libraryUuid}, name=${item.name}`);
-          deviceObj = item;
+          deviceUuid = item?.uuid ?? null;
           method = `lcsc(${comp.lcsc})`;
         } else {
           L(`${label}: getByLcscIds(${comp.lcsc}) 返回空，降级到搜索`);
         }
       }
 
-      // 2. 降级：按名称/型号搜索
+      // 2. 降级：按名称/型号搜索（同样只取 uuid）
       const searchTerm = comp.name || comp.value;
-      if (!deviceObj && searchTerm) {
+      if (!deviceUuid && searchTerm) {
         const list = await eda.lib_Device.search(searchTerm, undefined, undefined, undefined, 5, 1);
         L(`${label}: search(${searchTerm}) → ${list?.length ?? 0} 结果`);
         if (list && list.length > 0) {
-          deviceObj = list[0];
+          const item = list[0];
+          deviceUuid = item?.uuid ?? null;
           method = `search(${searchTerm})`;
-          L(`${label}: SearchItem uuid=${deviceObj.uuid}, libUuid=${deviceObj.libraryUuid}, name=${deviceObj.name}`);
+          L(`${label}: SearchItem uuid=${item.uuid}, libUuid=${item.libraryUuid}, name=${item.name}`);
         } else {
           L(`${label}: search(${searchTerm}) 也返回空`);
         }
       }
 
-      if (!deviceObj) {
+      if (!deviceUuid) {
         E(`${label}: 所有查找方式均失败 [lcsc=${comp.lcsc ?? '-'}, term=${searchTerm ?? '-'}]`);
         eda.sys_ToastMessage.showMessage(`元件未找到：${label}，已跳过`, 0 as any);
         continue;
       }
 
-      // 3. 尝试多种方式 create，按可靠性递减
-      let createResult: any = null;
+      // 3. 使用单一路径创建：先 get(uuid) 拿 DeviceItem，再 create 一次
       const cx = snap5(comp.x ?? 200);
       const cy = snap5(comp.y ?? 200);
       const cr = comp.rotation ?? 0;
       const bom = comp.add_to_bom !== false;
       const pcb = comp.add_to_pcb !== false;
 
-      // 方式 A: 用 SearchItem 直接传（类型系统声明支持）
+      let createResult: any = null;
       try {
-        createResult = await eda.sch_PrimitiveComponent.create(deviceObj, cx, cy, undefined, cr, false, bom, pcb);
-        if (createResult) L(`${label}: 方式A(SearchItem) 成功`);
-      } catch (eA: any) {
-        L(`${label}: 方式A(SearchItem) 失败 - ${eA?.message || eA}`);
+        const full = await eda.lib_Device.get(deviceUuid);
+        if (!full) {
+          E(`${label}: get(${deviceUuid}) 返回空`);
+          continue;
+        }
+        L(`${label}: get(${deviceUuid}) → DeviceItem uuid=${full.uuid} lib=${full.libraryUuid}`);
+        createResult = await eda.sch_PrimitiveComponent.create(full, cx, cy, undefined, cr, false, bom, pcb);
+      } catch (createErr: any) {
+        E(`${label}: create(DeviceItem) 失败 - ${createErr?.message || createErr}`);
       }
 
-      // 方式 B: 用 {libraryUuid, uuid} 最小对象
-      if (!createResult) {
-        const ids = extractIds(deviceObj);
-        if (ids) {
-          try {
-            createResult = await eda.sch_PrimitiveComponent.create(ids, cx, cy, undefined, cr, false, bom, pcb);
-            if (createResult) L(`${label}: 方式B({libUuid,uuid}) 成功`);
-          } catch (eB: any) {
-            L(`${label}: 方式B({libUuid,uuid}) 失败 - ${eB?.message || eB}`);
-          }
-        }
-      }
-
-      // 方式 C: upgradeToFull — get() 拿完整 DeviceItem
-      if (!createResult && deviceObj?.uuid) {
-        try {
-          const full = await eda.lib_Device.get(deviceObj.uuid);
-          if (full) {
-            L(`${label}: get(${deviceObj.uuid}) → DeviceItem uuid=${full.uuid} lib=${full.libraryUuid}`);
-            createResult = await eda.sch_PrimitiveComponent.create(full, cx, cy, undefined, cr, false, bom, pcb);
-            if (createResult) L(`${label}: 方式C(DeviceItem) 成功`);
-          } else {
-            L(`${label}: get(${deviceObj.uuid}) 返回空`);
-          }
-        } catch (eC: any) {
-          L(`${label}: 方式C(DeviceItem) 失败 - ${eC?.message || eC}`);
-        }
-      }
       if (createResult) {
         // 关键：调用 done() 将图元更改应用到画布（参考 easyeda-copilot 的 assemble.ts）
         // 不调用 done() 时，引脚位置可能尚未最终确定
@@ -257,11 +311,11 @@ async function placeCircuitOnCanvas(circuitJson: any): Promise<{ placedCount: nu
           L(`${label}: done() 警告 - ${doneErr?.message || doneErr}`);
         }
         const primitiveId = createResult.getState_PrimitiveId?.() ?? '';
-        L(`✓ ${label}: 已放置 via ${method}, primitiveId=${primitiveId}`);
+        L(`✓ ${label}: 已放置 via ${method} + get(uuid), primitiveId=${primitiveId}`);
         placedCount++;
         if (comp.ref) compResults.set(comp.ref, { obj: createResult, primitiveId });
       } else {
-        E(`${label}: create() 返回空（via ${method}）`);
+        E(`${label}: create() 返回空（via ${method} + get(uuid)）`);
       }
     } catch (e: any) {
       E(`${label}: 放置异常 - ${e?.message || e}`);
@@ -273,7 +327,13 @@ async function placeCircuitOnCanvas(circuitJson: any): Promise<{ placedCount: nu
   // EDA SDK createNetFlag 的 type 参数首字母必须大写（"Ground"/"Power"/"NetFlag"）
   const normalizeNetType = (t: string): string => {
     if (!t) return 'NetFlag';
-    const map: Record<string, string> = { ground: 'Ground', power: 'Power', netflag: 'NetFlag' };
+    const map: Record<string, string> = {
+      ground: 'Ground',
+      gnd: 'Ground',
+      power: 'Power',
+      vcc: 'Power',
+      netflag: 'NetFlag',
+    };
     return map[t.toLowerCase()] ?? (t.charAt(0).toUpperCase() + t.slice(1));
   };
 
