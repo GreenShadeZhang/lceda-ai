@@ -1,6 +1,6 @@
 # Story 3.2: 后端 CircuitParserAgent 与 LLM 电路解析
 
-## Status: ready-for-dev
+## Status: review
 
 ## Story
 
@@ -10,14 +10,14 @@ So that IFrame 前端能接收实时进度事件并最终获得完整的电路 J
 
 ## Tasks
 
-- [ ] 安装 NuGet 包：`Azure.AI.OpenAI`（`dotnet add package Azure.AI.OpenAI`）
-- [ ] 创建 `Api/Controllers/SchematicsController.cs` — `[Authorize]` + `[Route("api/schematics")]`，`POST /generate` 方法，设置 `text/event-stream` Content-Type，调用 `SchematicService.GenerateStreamAsync()` 写入 SSE 事件
-- [ ] 创建 `Services/ISchematicService.cs` — 定义接口 `IAsyncEnumerable<SseEvent> GenerateStreamAsync(string userInput, CancellationToken ct)`
-- [ ] 创建 `Services/SseEvent.cs` — 简单 record 持有 `Type` 和 `Payload`（已序列化 JSON 字符串）
-- [ ] 创建 `Services/SchematicService.cs` — 注入 `CircuitParserAgent`，调用 agent 解析，yield SSE progress 事件、complete 事件
-- [ ] 创建 `Agents/CircuitParserAgent.cs` — 注入 `OpenAIClient`（Azure.AI.OpenAI），构建电路解析系统 prompt，调用 LLM chat completion，解析返回 JSON，最多重试 1 次，失败抛 `LlmParseException`
-- [ ] 创建 `Agents/LlmParseException.cs` — 携带 `RawResponse` 字符串，供 service 层日志记录
-- [ ] 在 `Program.cs` 注册：`AddOpenAIClient()`（从 appsettings 读取 Endpoint/ApiKey）、`AddScoped<CircuitParserAgent>()`、`AddScoped<ISchematicService, SchematicService>()`
+- [x] 安装 NuGet 包：`Azure.AI.OpenAI`（`dotnet add package Azure.AI.OpenAI`）
+- [x] 创建 `Api/Controllers/SchematicsController.cs` — `[Authorize]` + `[Route("api/schematics")]`，`POST /generate` 方法，设置 `text/event-stream` Content-Type，调用 `SchematicService.GenerateStreamAsync()` 写入 SSE 事件
+- [x] 创建 `Services/ISchematicService.cs` — 定义接口 `IAsyncEnumerable<SseEvent> GenerateStreamAsync(string userInput, CancellationToken ct)`
+- [x] 创建 `Services/SseEvent.cs` — 简单 record 持有 `Type` 和 `Payload`（已序列化 JSON 字符串）
+- [x] 创建 `Services/SchematicService.cs` — 注入 `CircuitParserAgent`，调用 agent 解析，yield SSE progress 事件、complete 事件
+- [x] 创建 `Agents/CircuitParserAgent.cs` — 注入 `OpenAIClient`（Azure.AI.OpenAI），构建电路解析系统 prompt，调用 LLM chat completion，解析返回 JSON，最多重试 1 次，失败抛 `LlmParseException`
+- [x] 创建 `Agents/LlmParseException.cs` — 携带 `RawResponse` 字符串，供 service 层日志记录
+- [x] 在 `Program.cs` 注册：`AddOpenAIClient()`（从 appsettings 读取 Endpoint/ApiKey）、`AddScoped<CircuitParserAgent>()`、`AddScoped<ISchematicService, SchematicService>()`
 
 ## Acceptance Criteria
 
@@ -251,6 +251,39 @@ public record GenerateRequest(string UserInput);
 ```
 API Key 开发时在 `appsettings.Development.json` 或通过环境变量 `OpenAI__ApiKey` 注入，**不提交明文 Key**。
 
+### ⚠️ Agent Framework API 实际调查结论（Dev Note 修正）
+
+`Microsoft.Agents.AI.OpenAI 1.0.0-rc3` 的实际 API 与故事 Dev Notes 所描述的不同：
+
+| Dev Notes 假设 | 实际 API |
+|---|---|
+| `chatClient.AsAIAgent(name, instructions)` | 该扩展方法仅存在于 `OpenAI.Assistants.AssistantClient`（OpenAI Assistants/Threads API），**不适用于** `ChatClient` |
+| `agent.RunAsync(string)` → `string` | 实际返回 `AgentResponse` 类型 |
+
+**实际实现方案**：改为使用 `Microsoft.Extensions.AI.IChatClient`（已通过 `Microsoft.Agents.AI.OpenAI` 传递依赖引入）：
+
+```csharp
+// Program.cs — 注册 IChatClient Singleton（系统 prompt 由 CircuitParserAgent 在消息列表中传递）
+builder.Services.AddSingleton<IChatClient>(sp =>
+{
+    var apiKey = cfg["OpenAI:ApiKey"]!;
+    var model  = cfg["OpenAI:ModelName"] ?? "gpt-4o";
+    var ep     = cfg["OpenAI:Endpoint"];
+    var opts   = new OpenAIClientOptions();
+    if (!string.IsNullOrEmpty(ep)) opts.Endpoint = new Uri(ep);
+    return new OpenAIClient(new ApiKeyCredential(apiKey), opts)
+        .GetChatClient(model).AsIChatClient();
+});
+```
+
+```csharp
+// CircuitParserAgent — 使用 GetResponseAsync（v10.x 新 API，原 CompleteAsync 已改名）
+var response = await chatClient.GetResponseAsync(messages, cancellationToken: ct);
+lastRaw = response.Text;  // ChatResponse.Text 为整合文本属性
+```
+
+**注意**：`Microsoft.Extensions.AI` 10.x 将 `CompleteAsync` 改名为 `GetResponseAsync`，返回 `ChatResponse`（原为 `ChatCompletion`）。`ApiKeyCredential` 来自 `System.ClientModel` 包（非 `OpenAI` 或 `Azure.Core` 命名空间）。
+
 ### Agent Framework API 速查
 ```csharp
 // ✅ 正确：通过 AsAIAgent() 工厂方法创建（非继承）
@@ -296,3 +329,4 @@ AIAgent agentWithTools = chatClient.AsAIAgent(
 | Date | Change |
 |------|--------|
 | 2026-03-06 | 初始创建 |
+| 2026-07-14 | 完成实现：安装 Microsoft.Agents.AI.OpenAI 1.0.0-rc3，创建所有源文件，调查实际 API 差异后改用 IChatClient/GetResponseAsync，修复 yield-in-try 编译限制，构建通过。Status → review |
