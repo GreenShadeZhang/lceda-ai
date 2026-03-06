@@ -36,6 +36,10 @@ const BACKEND_API = 'http://localhost:5267';
 const MSG_GENERATE_REQUEST = 'GENERATE_REQUEST';
 const MSG_GENERATE_RESULT  = 'GENERATE_RESULT';
 const MSG_GENERATE_ERROR   = 'GENERATE_ERROR';
+const MSG_DEBUG_INSPECT    = 'DEBUG_INSPECT';
+const MSG_DEBUG_RESULT     = 'DEBUG_RESULT';
+const MSG_CLEAR_CANVAS     = 'CLEAR_CANVAS';
+const MSG_CLEAR_RESULT     = 'CLEAR_RESULT';
 
 let currentAccessToken  = null;
 let currentRefreshToken = null;
@@ -325,6 +329,8 @@ function setupAppEventListeners() {
 
   document.getElementById('generate-btn').addEventListener('click', handleGenerate);
   document.getElementById('logout-btn').addEventListener('click', handleLogout);
+  document.getElementById('btn-inspect').addEventListener('click', handleInspect);
+  document.getElementById('btn-clear').addEventListener('click', handleClear);
   document.getElementById('user-input').addEventListener('keydown', e => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') handleGenerate();
   });
@@ -351,6 +357,129 @@ function handleLogout() {
   if (chatEl) chatEl.innerHTML = '';
   showEdaToast('已退出登录');
   showLoginUI();
+}
+
+async function handleInspect() {
+  const btn = document.getElementById('btn-inspect');
+  btn.disabled = true;
+  btn.textContent = '检查中...';
+
+  const bubbleEl = appendAiMessageElement();
+  updateBubble(bubbleEl, '🔍 正在检查画布元件...');
+
+  try {
+    eda.sys_MessageBus.publish(MSG_DEBUG_INSPECT, {});
+  } catch (e) {
+    updateBubble(bubbleEl, '❗ MessageBus 发布失败: ' + e.message, true);
+    btn.disabled = false;
+    btn.textContent = '🔍 检查';
+    return;
+  }
+
+  await new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      updateBubble(bubbleEl, '❗ 检查超时（主线程未响应）', true);
+      resolve(undefined);
+    }, 8000);
+
+    try {
+      eda.sys_MessageBus.subscribeOnce(MSG_DEBUG_RESULT, (data) => {
+        clearTimeout(timer);
+        if (data?.error) {
+          updateBubble(bubbleEl, '❗ 检查出错: ' + data.error, true);
+        } else {
+          const text = formatInspectResult(data);
+          updateBubble(bubbleEl, text);
+          console.log('[DEBUG_INSPECT] 完整数据:', JSON.stringify(data, null, 2));
+        }
+        resolve(undefined);
+      });
+    } catch (e) {
+      clearTimeout(timer);
+      updateBubble(bubbleEl, '❗ 订阅失败: ' + e.message, true);
+      resolve(undefined);
+    }
+  });
+
+  btn.disabled = false;
+  btn.textContent = '🔍 检查';
+}
+
+async function handleClear() {
+  const btn = document.getElementById('btn-clear');
+  btn.disabled = true;
+  btn.textContent = '清除中...';
+
+  const bubbleEl = appendAiMessageElement();
+  updateBubble(bubbleEl, '🗑️ 正在清除画布...');
+
+  try {
+    eda.sys_MessageBus.publish(MSG_CLEAR_CANVAS, {});
+  } catch (e) {
+    updateBubble(bubbleEl, '❗ 清除失败: ' + e.message, true);
+    btn.disabled = false;
+    btn.textContent = '🗑️ 清除';
+    return;
+  }
+
+  await new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      updateBubble(bubbleEl, '❗ 清除超时（主线程未响应）', true);
+      resolve(undefined);
+    }, 10000);
+
+    try {
+      eda.sys_MessageBus.subscribeOnce(MSG_CLEAR_RESULT, (data) => {
+        clearTimeout(timer);
+        if (data?.success) {
+          updateBubble(bubbleEl, `✅ 画布已清除：${data.components || 0} 个元件, ${data.wires || 0} 条导线, ${data.pins || 0} 个引脚`);
+        } else {
+          updateBubble(bubbleEl, '❗ 清除失败: ' + (data?.error || '未知错误'), true);
+        }
+        resolve(undefined);
+      });
+    } catch (e) {
+      clearTimeout(timer);
+      updateBubble(bubbleEl, '❗ 订阅失败: ' + e.message, true);
+      resolve(undefined);
+    }
+  });
+
+  btn.disabled = false;
+  btn.textContent = '🗑️ 清除';
+}
+
+function formatInspectResult(data) {
+  const s = data.summary || {};
+  let text = `🔍 画布检查结果\n`;
+  text += `────────────────────\n`;
+  text += `元件: ${s.components || 0}  引脚: ${s.totalPins || 0}  导线: ${s.wires || 0}  网络标识: ${s.netFlags || 0}\n\n`;
+
+  for (const comp of data.components || []) {
+    text += `📦 ${comp.designator || '?'} (${comp.name || '?'}) @ (${comp.x}, ${comp.y}) rot=${comp.rotation}\n`;
+    text += `   LCSC: ${comp.supplierId || '-'}\n`;
+    for (const pin of comp.pins || []) {
+      text += `   └ Pin ${pin.number} [${pin.name}] @ (${pin.x}, ${pin.y})\n`;
+    }
+  }
+
+  if ((data.wires || []).length > 0) {
+    text += `\n🔗 导线:\n`;
+    for (const w of data.wires) {
+      const pts = Array.isArray(w.line) ? JSON.stringify(w.line) : '-';
+      text += `   net=${w.net || '?'}  points=${pts}\n`;
+    }
+  }
+
+  if ((data.netFlags || []).length > 0) {
+    text += `\n🏷️ 网络标识:\n`;
+    for (const nf of data.netFlags) {
+      text += `   ${nf.name || nf.number || '?'} @ (${nf.x}, ${nf.y})\n`;
+    }
+  }
+
+  text += `\nℹ️ 完整数据已输出到控制台 (F12)`;
+  return text;
 }
 
 // ---------------------------------------------------------------------------

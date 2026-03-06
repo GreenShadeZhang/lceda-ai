@@ -102,6 +102,20 @@
 
     .btn-small:hover { background: rgba(243,139,168,0.1); }
 
+    .btn-debug {
+      padding: 4px 8px;
+      background: transparent;
+      color: #a6e3a1;
+      border: 1px solid #a6e3a1;
+      border-radius: 6px;
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-debug:hover { background: rgba(166,227,161,0.1); }
+    .btn-debug:disabled { opacity: 0.4; cursor: not-allowed; }
+
     #chat-messages {
       flex: 1;
       overflow-y: auto;
@@ -371,7 +385,11 @@
   <div id="app-section">
     <div class="app-header">
       <span class="app-title">🤖 AI 原理图生成器</span>
-      <button id="logout-btn" class="btn-small">退出登录</button>
+      <div style="display:flex;gap:4px;align-items:center;">
+        <button id="btn-clear" class="btn-debug" title="清除画布所有元素" style="color:#e74c3c;border-color:#e74c3c;">🗑️ 清除</button>
+        <button id="btn-inspect" class="btn-debug" title="检查画布元件">🔍 检查</button>
+        <button id="logout-btn" class="btn-small">退出登录</button>
+      </div>
     </div>
     <div id="chat-messages"></div>
     <div class="input-area">
