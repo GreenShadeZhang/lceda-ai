@@ -30,7 +30,7 @@ const DEVICE_AUTH_ENDPOINT = `${KEYCLOAK_AUTHORITY}/protocol/openid-connect/auth
 const TOKEN_ENDPOINT       = `${KEYCLOAK_AUTHORITY}/protocol/openid-connect/token`;
 
 // 后端 AI 服务地址（TODO: 替换为生产环境 URL）
-const BACKEND_API = 'http://localhost:5000';
+const BACKEND_API = 'http://localhost:5267';
 
 // MessageBus 主题（与 src/messageTypes.ts 保持一致）
 const MSG_GENERATE_REQUEST = 'GENERATE_REQUEST';

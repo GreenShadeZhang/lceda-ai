@@ -36,18 +36,22 @@ public class CircuitParserAgent(IChatClient chatClient, ComponentSearchTool sear
         var tool    = AIFunctionFactory.Create(searchTool.SearchComponentAsync);
         var options = new ChatOptions { Tools = [tool] };
         string? lastRaw = null;
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.System, SystemPrompt),
+            new(ChatRole.User, userInput),
+        };
         for (int attempt = 0; attempt < 2; attempt++)
         {
-            var messages = new List<ChatMessage>
-            {
-                new(ChatRole.System, SystemPrompt),
-                new(ChatRole.User, userInput),
-            };
             var response = await chatClient.GetResponseAsync(messages, options, cancellationToken: ct);
             lastRaw = response.Text;
+            logger.LogInformation("LLM attempt {Attempt} raw response: {Raw}", attempt + 1, lastRaw);
             if (TryParseCircuitJson(lastRaw ?? "", out var doc))
                 return doc!;
             logger.LogWarning("LLM parse attempt {Attempt} failed. Raw response: {Raw}", attempt + 1, lastRaw);
+            // 将失败响应加入上下文，告知 LLM 纠错
+            messages.Add(new ChatMessage(ChatRole.Assistant, lastRaw ?? ""));
+            messages.Add(new ChatMessage(ChatRole.User, "你的响应包含非 JSON 内容导致解析失败。请只返回纯 JSON 对象，不要包含任何说明文字或代码块标记。"));
         }
         throw new LlmParseException(lastRaw ?? string.Empty);
     }
@@ -55,13 +59,23 @@ public class CircuitParserAgent(IChatClient chatClient, ComponentSearchTool sear
     private static bool TryParseCircuitJson(string raw, out JsonDocument? doc)
     {
         var json = raw.Trim();
-        // LLM 有时会返回 ```json ... ``` 代码块，剥离后再解析
-        if (json.StartsWith("```"))
+
+        // 1. 剥离 ```json ... ``` 代码块
+        if (json.Contains("```"))
         {
-            var start = json.IndexOf('\n') + 1;
-            var end   = json.LastIndexOf("```");
-            json = end > start ? json[start..end].Trim() : json;
+            var fenceStart = json.IndexOf("```");
+            var newline    = json.IndexOf('\n', fenceStart);
+            var fenceEnd   = json.LastIndexOf("```");
+            if (newline >= 0 && fenceEnd > newline)
+                json = json[(newline + 1)..fenceEnd].Trim();
         }
+
+        // 2. 提取最外层 JSON 对象（跳过前后的解释文字）
+        var startBrace = json.IndexOf('{');
+        var endBrace   = json.LastIndexOf('}');
+        if (startBrace >= 0 && endBrace > startBrace)
+            json = json[startBrace..(endBrace + 1)];
+
         try
         {
             doc = JsonDocument.Parse(json);
