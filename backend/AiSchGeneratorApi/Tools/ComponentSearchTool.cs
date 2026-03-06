@@ -6,17 +6,17 @@ namespace AiSchGeneratorApi.Tools;
 
 public class ComponentSearchTool(ComponentService componentService)
 {
-    [Description("按元件名称或型号在立创官方综合库中搜索可用元件，返回元件 UUID 和 LCSC 编号的 JSON。无结果时返回 COMPONENT_NOT_FOUND 错误码。")]
+    [Description("通过 LCSC 编号（如 C6186）验证元件是否存在于立创EDA官方库，返回 UUID 和元件名称的 JSON。找不到时返回 COMPONENT_NOT_FOUND。")]
     public async Task<string> SearchComponentAsync(
-        [Description("元件名称或型号，如 'AMS1117-3.3'、'100nF 0402 电容'、'NPN 通用三极管'")] string componentName,
+        [Description("LCSC 元件编号，格式为 C 后跟数字，如 'C6186'（AMS1117-3.3）、'C21190'（100nF 0402）、'C17024'（10µF 0805）")] string lcscId,
         CancellationToken cancellationToken = default)
     {
-        var results = await componentService.SearchAsync(componentName, cancellationToken);
+        var result = await componentService.GetByLcscIdAsync(lcscId, cancellationToken);
 
-        if (results.Count == 0)
-            return """{"code":"COMPONENT_NOT_FOUND","message":"未找到符合条件的立创库元件"}""";
+        if (result is null)
+            return $"{{\"code\":\"COMPONENT_NOT_FOUND\",\"message\":\"LCSC {lcscId} 不存在于立创EDA库\"}}";
 
-        return JsonSerializer.Serialize(results, new JsonSerializerOptions
+        return JsonSerializer.Serialize(result, new JsonSerializerOptions
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase
         });

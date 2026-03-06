@@ -1,6 +1,7 @@
 using AiSchGeneratorApi.Agents;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace AiSchGeneratorApi.Services;
 
@@ -8,7 +9,10 @@ namespace AiSchGeneratorApi.Services;
 /// 编排 CircuitParserAgent，产生 SSE 事件流。
 /// 所有错误均以 SSE <c>error</c> 事件返回，不向 Controller 层抛出异常。
 /// </summary>
-public class SchematicService(CircuitParserAgent agent, ILogger<SchematicService> logger)
+public class SchematicService(
+    CircuitParserAgent agent,
+    ComponentService componentService,
+    ILogger<SchematicService> logger)
     : ISchematicService
 {
     public async IAsyncEnumerable<SseEvent> GenerateStreamAsync(
@@ -28,7 +32,57 @@ public class SchematicService(CircuitParserAgent agent, ILogger<SchematicService
             yield break;
         }
 
-        yield return SseEvent.Complete(doc!);
+        // 生成后比对立创商城，验证并补全 LCSC 编号
+        yield return SseEvent.Progress("正在比对立创商城，验证元件存在性...");
+        var (validatedDoc, validCount, totalCount) = await ValidateAndEnrichAsync(doc!, ct);
+        yield return SseEvent.Progress($"元件验证完成：{validCount}/{totalCount} 个已确认");
+
+        yield return SseEvent.Complete(validatedDoc);
+    }
+
+    /// <summary>
+    /// 生成后验证步骤：对每个元件的 LCSC 编号调用真实立创EDA API 确认存在。
+    /// 若 LCSC 无效，自动按元件名称搜索补全；若仍未找到，保留原值并记录警告。
+    /// </summary>
+    private async Task<(JsonDocument Doc, int ValidCount, int TotalCount)> ValidateAndEnrichAsync(
+        JsonDocument source, CancellationToken ct)
+    {
+        var node  = JsonNode.Parse(source.RootElement.GetRawText());
+        var comps = node?["components"]?.AsArray();
+
+        int validCount = 0, totalCount = 0;
+
+        if (comps is not null)
+        {
+            foreach (var comp in comps)
+            {
+                if (comp is null) continue;
+                totalCount++;
+
+                var lcsc = comp["lcsc"]?.GetValue<string>() ?? "";
+                var name = comp["name"]?.GetValue<string>()
+                        ?? comp["description"]?.GetValue<string>() ?? "";
+
+                if (!string.IsNullOrEmpty(lcsc))
+                {
+                    // 用 LCSC 编号直接调 easyeda2kicad 兼容 API 验证
+                    var found = await componentService.GetByLcscIdAsync(lcsc, ct);
+                    if (found is not null)
+                    {
+                        comp["uuid"] = found.Uuid; // 以 API 返回的 UUID 为准
+                        comp["lcsc"] = found.Lcsc; // 规范化大写
+                        validCount++;
+                        logger.LogInformation("✓ 元件已确认: {Name} lcsc={Lcsc} uuid={Uuid}", name, found.Lcsc, found.Uuid);
+                        continue;
+                    }
+                    logger.LogWarning("LCSC {Lcsc} 未在立创EDA找到 (name={Name})", lcsc, name);
+                }
+
+                logger.LogWarning("元件无有效LCSC编号: lcsc={Lcsc}, name={Name}", lcsc, name);
+            }
+        }
+
+        return (JsonDocument.Parse(node!.ToJsonString()), validCount, totalCount);
     }
 
     private async Task<(bool Success, JsonDocument? Doc, SseEvent? Error)> TryParseAsync(

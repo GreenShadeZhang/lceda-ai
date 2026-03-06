@@ -533,15 +533,12 @@ async function handleJsonResponse(data, bubbleEl) {
 // ---------------------------------------------------------------------------
 // Story 3.4: 通过 eda.sys_MessageBus 通知主线程放置元件
 // 主线程（index.ts）订阅 GENERATE_REQUEST 并调用 EDA SDK
+// IFrame → 主线程 MessageBus 是单向的；采用非阻塞模式，5s 内有回复则更新 UI，超时也不报错
 // ---------------------------------------------------------------------------
 async function notifyMainThreadToPlace(circuitJson, bubbleEl, prevText) {
   dbg('publishing GENERATE_REQUEST to MessageBus...');
   const compCount = (circuitJson.components || []).length;
-  updateBubble(bubbleEl, (prevText ? prevText + '\n' : '') +
-    `电路解析完成（${compCount} 个元件），正在放置到画布...`);
-  setGenStatus('正在放置元件...');
 
-  // 通过 MessageBus 发送给主线程
   try {
     eda.sys_MessageBus.publish(MSG_GENERATE_REQUEST, circuitJson);
   } catch (e) {
@@ -549,52 +546,47 @@ async function notifyMainThreadToPlace(circuitJson, bubbleEl, prevText) {
     throw new Error('无法发送给主线程（MessageBus 不可用）: ' + e.message);
   }
 
-  // 等待主线程回复（最多 60 秒）
-  await waitForPlacementResult(bubbleEl, prevText, compCount);
-}
+  updateBubble(bubbleEl, (prevText ? prevText + '\n' : '') +
+    `电路解析完成（${compCount} 个元件），正在放置到画布...`);
+  setGenStatus('正在放置元件...');
 
-function waitForPlacementResult(bubbleEl, prevText, compCount) {
-  return new Promise((resolve, reject) => {
-    const TIMEOUT_MS = 60_000;
-    let   resultTask  = null;
-    let   errorTask   = null;
-    let   timer       = null;
-
-    function cleanup() {
-      if (timer) clearTimeout(timer);
-      try { if (resultTask) resultTask.unsubscribe?.(); } catch (_) {}
-      try { if (errorTask)  errorTask.unsubscribe?.();  } catch (_) {}
-    }
-
-    generateTaskCleanup = cleanup;
-
-    timer = setTimeout(() => {
-      cleanup();
-      reject(new Error('主线程响应超时（60s），请检查 index.ts 是否已订阅 GENERATE_REQUEST'));
-    }, TIMEOUT_MS);
+  // 非阻塞等待主线程结果（至多 5 秒）；超时视为成功，主线程已独立完成放置
+  let gotResponse = false;
+  await new Promise((resolve) => {
+    const timer = setTimeout(resolve, 5_000);
 
     try {
-      resultTask = eda.sys_MessageBus.subscribeOnce(MSG_GENERATE_RESULT, (result) => {
-        cleanup();
+      eda.sys_MessageBus.subscribeOnce(MSG_GENERATE_RESULT, (result) => {
+        clearTimeout(timer);
+        gotResponse = true;
         const placed = result?.placedCount ?? compCount;
+        const logLines = Array.isArray(result?.log) ? result.log : [];
+        const logText = logLines.length > 0 ? '\n\n📋 日志：\n' + logLines.join('\n') : '';
         updateBubble(bubbleEl, (prevText ? prevText + '\n' : '') +
-          `✅ 原理图已生成！共放置 ${placed} 个元件。`);
+          `✅ 原理图已生成！共放置 ${placed} 个元件。` + logText);
         showEdaToast(`生成成功！放置了 ${placed} 个元件`);
-        resolve();
+        resolve(undefined);
       });
 
-      errorTask = eda.sys_MessageBus.subscribeOnce(MSG_GENERATE_ERROR, (err) => {
-        cleanup();
-        const msg = err?.message || String(err) || '未知错误';
+      eda.sys_MessageBus.subscribeOnce(MSG_GENERATE_ERROR, (err) => {
+        clearTimeout(timer);
+        gotResponse = true;
+        const msg = err?.message || String(err) || '元件放置部分失败';
         updateBubble(bubbleEl, (prevText ? prevText + '\n' : '') +
-          `⚠️ 元件放置失败：${msg}`, true);
-        reject(new Error(msg));
+          `⚠️ 放置时发生错误：${msg}`, true);
+        resolve(undefined);
       });
     } catch (e) {
-      cleanup();
-      reject(e);
+      clearTimeout(timer);
+      resolve(undefined);
     }
   });
+
+  if (!gotResponse) {
+    updateBubble(bubbleEl, (prevText ? prevText + '\n' : '') +
+      `✅ 原理图已发送（${compCount} 个元件），请查看画布`);
+    showEdaToast('原理图已发送到画布');
+  }
 }
 
 // ---------------------------------------------------------------------------

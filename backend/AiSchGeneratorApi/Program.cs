@@ -96,7 +96,11 @@ builder.Services.AddSingleton<IChatClient>(sp =>
 // ─────────────────────────────────────────────────────────────
 
 // ComponentService (通过 HttpClient 工厂注册，目前为 Mock，Spike 后替换为真实实现)
-builder.Services.AddHttpClient<ComponentService>();
+builder.Services.AddHttpClient<ComponentService>()
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        AutomaticDecompression = System.Net.DecompressionMethods.GZip | System.Net.DecompressionMethods.Deflate
+    });
 
 // ComponentSearchTool (Scoped，生命周期与 ComponentService 匹配)
 builder.Services.AddScoped<ComponentSearchTool>();
