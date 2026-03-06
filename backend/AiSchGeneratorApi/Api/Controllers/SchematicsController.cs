@@ -1,6 +1,7 @@
 using AiSchGeneratorApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
 
 namespace AiSchGeneratorApi.Api.Controllers;
 
@@ -20,7 +21,11 @@ public class SchematicsController(ISchematicService service) : ControllerBase
         Response.ContentType = "text/event-stream";
         Response.Headers.CacheControl = "no-cache";
 
-        await foreach (var evt in service.GenerateStreamAsync(req.UserInput, ct))
+        var userId = User.FindFirst("sub")?.Value
+                  ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                  ?? string.Empty;
+
+        await foreach (var evt in service.GenerateStreamAsync(req.UserInput, userId, req.SessionId, ct))
         {
             await Response.WriteAsync($"data: {evt.Payload}\n\n", ct);
             await Response.Body.FlushAsync(ct);
@@ -32,4 +37,4 @@ public class SchematicsController(ISchematicService service) : ControllerBase
 }
 
 /// <summary>生成请求 DTO。</summary>
-public record GenerateRequest(string UserInput);
+public record GenerateRequest(string UserInput, Guid? SessionId = null);

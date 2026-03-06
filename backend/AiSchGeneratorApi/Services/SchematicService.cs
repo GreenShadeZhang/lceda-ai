@@ -1,4 +1,6 @@
 using AiSchGeneratorApi.Agents;
+using AiSchGeneratorApi.Infrastructure.Data;
+using AiSchGeneratorApi.Models;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -12,11 +14,14 @@ namespace AiSchGeneratorApi.Services;
 public class SchematicService(
     CircuitParserAgent agent,
     ComponentService componentService,
+    AppDbContext db,
     ILogger<SchematicService> logger)
     : ISchematicService
 {
     public async IAsyncEnumerable<SseEvent> GenerateStreamAsync(
         string userInput,
+        string userId,
+        Guid? sessionId = null,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
         yield return SseEvent.Progress("正在分析电路需求...");
@@ -38,6 +43,8 @@ public class SchematicService(
         yield return SseEvent.Progress($"元件验证完成：{validCount}/{totalCount} 个已确认");
 
         yield return SseEvent.Complete(validatedDoc);
+
+        await TrySaveHistoryAsync(userId, sessionId, userInput, validatedDoc, ct);
     }
 
     /// <summary>
@@ -83,6 +90,31 @@ public class SchematicService(
         }
 
         return (JsonDocument.Parse(node!.ToJsonString()), validCount, totalCount);
+    }
+
+    private async Task TrySaveHistoryAsync(
+        string userId, Guid? sessionId, string userInput, JsonDocument circuitDoc, CancellationToken ct)
+    {
+        try
+        {
+            var history = new SchematicHistory
+            {
+                Id = Guid.NewGuid(),
+                UserId = userId,
+                SessionId = sessionId,
+                UserInput = userInput,
+                CircuitJson = circuitDoc.RootElement.GetRawText(),
+                CreatedAt = DateTime.UtcNow,
+                IsSuccess = true
+            };
+            db.SchematicHistories.Add(history);
+            await db.SaveChangesAsync(ct);
+            logger.LogInformation("历史记录已写入: id={Id}, userId={UserId}", history.Id, userId);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "写入生成历史记录失败，userId={UserId}", userId);
+        }
     }
 
     private async Task<(bool Success, JsonDocument? Doc, SseEvent? Error)> TryParseAsync(
