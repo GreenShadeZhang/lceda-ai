@@ -1,6 +1,6 @@
 # Story 3.3: ComponentSearchTool 元件搜索与验证
 
-## Status: ready-for-dev
+## Status: review
 
 ## Story
 
@@ -10,12 +10,12 @@ So that 最终电路 JSON 中的元件 UUID 全部来自立创官方库，保证
 
 ## Tasks
 
-- [ ] **[Spike]** 研究立创EDA Pro 组件库搜索 HTTP API（参考文档：https://prodocs.lceda.cn/cn/api/guide/，抓包验证 endpoint）；POC 期间可先用 Mock 实现（见 Dev Notes）
-- [ ] 创建 `Services/ComponentService.cs` — 注入 `HttpClient`，实现 `SearchAsync(string query, CancellationToken ct)` 方法，返回 `List<ComponentResult>`，含候选筛选逻辑（基础库优先，排除停产）
-- [ ] 创建 `Tools/ComponentSearchTool.cs` — `[Description]` 装饰的实例方法 `SearchComponentAsync(string componentName)`，注入 `ComponentService`，将搜索结果序列化为 JSON 字符串返回给 LLM；无结果时返回 `COMPONENT_NOT_FOUND` JSON
-- [ ] 创建 `Api/Controllers/ComponentsController.cs` — `GET /api/components/search?q=` 端点（`[Authorize]`），代理立创库查询，供前端直接调试用
-- [ ] 修改 `Agents/CircuitParserAgent.cs` — 构造函数注入 `ComponentSearchTool`，存为字段备用（实际注册在 Program.cs 的工厂方法中）
-- [ ] 修改 `Program.cs` — 注册 `ComponentService`（`AddHttpClient`）、`ComponentSearchTool`（`AddSingleton`），更新 `AIAgent` DI Singleton 工厂，在 `AsAIAgent()` 的 `tools:` 参数内注册 `AIFunctionFactory.Create(searchTool.SearchComponentAsync)`
+- [x] **[Spike]** 研究立创EDA Pro 组件库搜索 HTTP API（参考文档：https://prodocs.lceda.cn/cn/api/guide/，抓包验证 endpoint）；POC 期间先用 Mock 实现（见 Dev Notes）
+- [x] 创建 `Services/ComponentService.cs` — 注入 `HttpClient`，实现 `SearchAsync(string query, CancellationToken ct)` 方法，返回 `List<ComponentResult>`，含候选筛选逻辑（基础库优先，排除停产）
+- [x] 创建 `Tools/ComponentSearchTool.cs` — `[Description]` 装饰的实例方法 `SearchComponentAsync(string componentName)`，注入 `ComponentService`，将搜索结果序列化为 JSON 字符串返回给 LLM；无结果时返回 `COMPONENT_NOT_FOUND` JSON
+- [x] 创建 `Api/Controllers/ComponentsController.cs` — `GET /api/components/search?q=` 端点（`[Authorize]`），代理立创库查询，供前端直接调试用
+- [x] 修改 `Agents/CircuitParserAgent.cs` — 构造函数注入 `ComponentSearchTool`，更新系统 prompt，通过 `ChatOptions.Tools` 注册 `AIFunctionFactory.Create()`
+- [x] 修改 `Program.cs` — 注册 `ComponentService`（`AddHttpClient`）、`ComponentSearchTool`（`AddScoped`），`IChatClient` 增加 `UseFunctionInvocation()` 中间件
 
 ## Acceptance Criteria
 
@@ -292,3 +292,4 @@ AIAgent agent = chatClient.AsAIAgent(
 | Date | Version | Description |
 |------|---------|-------------|
 | 2026-06-xx | 1.0 | 初版创建 |
+| 2026-03-06 | 1.1 | 实现完成：创建 ComponentResult、ComponentService (Mock)、ComponentSearchTool、ComponentsController；更新 CircuitParserAgent 注入 ComponentSearchTool + ChatOptions.Tools；Program.cs 增加 UseFunctionInvocation 中间件。Story 工具注册模式采用 AIFunctionFactory.Create() from Microsoft.Extensions.AI（非 Microsoft.Agents.AI）。Status → review |

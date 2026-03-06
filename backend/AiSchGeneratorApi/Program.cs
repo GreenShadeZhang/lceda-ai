@@ -4,6 +4,7 @@ using AiSchGeneratorApi.Agents;
 using AiSchGeneratorApi.Contracts;
 using AiSchGeneratorApi.Infrastructure.Data;
 using AiSchGeneratorApi.Services;
+using AiSchGeneratorApi.Tools;
 using Azure.AI.OpenAI;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.AI;
@@ -84,8 +85,21 @@ builder.Services.AddSingleton<IChatClient>(sp =>
         opts.Endpoint = new Uri(ep);
     return new OpenAIClient(new ApiKeyCredential(apiKey), opts)
         .GetChatClient(model)
-        .AsIChatClient();
+        .AsIChatClient()
+        .AsBuilder()
+        .UseFunctionInvocation()
+        .Build();
 });
+
+// ─────────────────────────────────────────────────────────────
+// 元件搜索服务 (Story 3.3)
+// ─────────────────────────────────────────────────────────────
+
+// ComponentService (通过 HttpClient 工厂注册，目前为 Mock，Spike 后替换为真实实现)
+builder.Services.AddHttpClient<ComponentService>();
+
+// ComponentSearchTool (Scoped，生命周期与 ComponentService 匹配)
+builder.Services.AddScoped<ComponentSearchTool>();
 
 builder.Services.AddScoped<CircuitParserAgent>();
 builder.Services.AddScoped<ISchematicService, SchematicService>();
