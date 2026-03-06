@@ -516,3 +516,85 @@ So that 我可以了解历史生成情况，后续扩展时支持重新加载历
 **Given** 分页参数
 **When** 调用 `GET /api/schematics?pageSize=5&pageIndex=2`
 **Then** 正确返回第 2 页数据，不返回其他用户的记录（数据隔离验证）
+
+---
+
+## Epic 5（可选）: 基于 Microsoft Agent Framework 的会话管理升级
+
+**目标：** 将 `CircuitParserAgent` 接入 Microsoft Agent Framework 的会话生命周期，实现多轮对话记忆——Agent 在同一 Session 内记住历史原理图上下文，支持用户在后续请求中增量修改已有电路。
+
+**覆盖需求：** FR-08 扩展（多轮会话历史）
+
+**触发条件：** 产品验证多轮修改场景（如"在上次的 LDO 电路基础上增加一个 LED 指示灯"）有用户需求时实施。
+
+> **背景：** Epic 4 已通过 EF Core 直写实现单次生成历史持久化。本 Epic 在此基础上引入框架级会话抽象，支持跨请求的上下文记忆。框架调研详见 `architecture.md` 的 "Epic 5+ 可选规划" 章节。
+
+---
+
+### Story 5.1: 实现 PostgresChatHistoryProvider
+
+As a 后端 AI 服务,
+I want 实现基于 PostgreSQL 的 `ChatHistoryProvider`，使 Agent 在同一 Session 内自动加载历史对话上下文,
+So that 用户可以在同一会话中发出增量修改指令，Agent 能理解上下文而无需用户重复描述。
+
+**Acceptance Criteria:**
+
+**Given** 用户在同一 `sessionId` 下发起第二次生成请求
+**When** `CircuitParserAgent` 通过 `RunStreamingAsync` 被调用
+**Then** `PostgresChatHistoryProvider.ProvideChatHistoryAsync` 从 `schematic_histories` 表按 `session_id` 加载历史记录，转换为 `ChatMessage[]` 注入 LLM 上下文
+
+**Given** Agent 完成本次生成
+**When** `StoreChatHistoryAsync` 被调用
+**Then** 新的对话轮次通过 `TrySaveHistoryAsync` 写入 `schematic_histories`，`session_id` 与请求一致
+
+**Given** `sessionId` 为 null（独立会话）
+**When** `ProvideChatHistoryAsync` 被调用
+**Then** 返回空历史列表，Agent 以无上下文模式运行（与 Epic 4 行为一致）
+
+**Given** PostgreSQL 读取历史失败
+**When** `ProvideChatHistoryAsync` 抛出异常
+**Then** 异常被捕获，Agent 降级为无上下文模式运行，记录 `LogWarning`，不中断生成流程
+
+---
+
+### Story 5.2: CircuitParserAgent 改造为 AIAgent 派生类
+
+As a 后端 AI 服务,
+I want 将 `CircuitParserAgent` 改造为基于 Microsoft Agent Framework `AIAgent` 的派生类，注册 `PostgresChatHistoryProvider`,
+So that Agent 可通过框架生命周期自动管理会话历史，`SchematicService` 调用更统一。
+
+**Acceptance Criteria:**
+
+**Given** `CircuitParserAgent` 改造完成
+**When** `SchematicService` 调用 `agent.RunStreamingAsync(session, userInput, ct)`
+**Then** 框架自动触发 `ProvideChatHistoryAsync`（注入历史）→ LLM 调用 → `StoreChatHistoryAsync`（存储历史）生命周期钩子
+
+**Given** 改造后的 Agent
+**When** 执行 `dotnet build`
+**Then** 无编译错误，现有 Epic 3 单次生成功能（无 sessionId）行为不变
+
+**Given** 注册 `PostgresChatHistoryProvider`
+**When** DI 容器构建
+**Then** `Program.cs` 中正确注册，无循环依赖
+
+---
+
+### Story 5.3: AgentSession 与多轮对话端到端验证
+
+As a 用户,
+I want 在同一会话中先生成 LDO 电路，再输入"增加一个 LED 电源指示灯"后 Agent 能在原电路基础上增量修改,
+So that 验证多轮会话记忆的完整链路可用。
+
+**Acceptance Criteria:**
+
+**Given** 用户第一次请求生成"5V 转 3.3V LDO 供电模块"，服务器返回 `sessionId`
+**When** 用户第二次请求"在上述电路基础上增加一个 LED 电源指示灯"，携带同一 `sessionId`
+**Then** LLM 收到包含第一次电路上下文的历史消息，生成结果包含 LDO 电路 + LED 及限流电阻，无需用户重复描述 LDO 电路
+
+**Given** 跨请求会话
+**When** 两次请求之间后端重启（模拟服务重启）
+**Then** 第二次请求仍能从 PostgreSQL 恢复历史上下文，不因内存丢失而失效
+
+**Given** 无效 `sessionId`（数据库不存在）
+**When** 携带该 `sessionId` 请求
+**Then** 降级为无上下文模式运行，返回正常生成结果，不返回 404 或 500
