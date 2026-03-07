@@ -8,7 +8,7 @@ Write-Host "=== AiSchGenerator 服务健康检查 ===" -ForegroundColor Cyan
 
 # API 健康检查
 try {
-    $resp = Invoke-WebRequest -Uri "http://localhost:5000/healthz" -UseBasicParsing -TimeoutSec 5
+    $resp = Invoke-WebRequest -Uri "http://localhost:5267/healthz" -UseBasicParsing -TimeoutSec 5
     $body = $resp.Content | ConvertFrom-Json
     Write-Host "API          : HEALTHY ($($body.status))" -ForegroundColor Green
 } catch {

@@ -30,7 +30,7 @@ docker compose up -d
 
 Write-Host ""
 Write-Host "服务地址：" -ForegroundColor Cyan
-Write-Host "  API         : http://localhost:5000"
+Write-Host "  API         : http://localhost:5267"
 Write-Host "  Keycloak    : http://localhost:8080  (admin / admin)"
 Write-Host "  PostgreSQL  : localhost:5432  (dev / dev)"
 Write-Host ""

@@ -8,20 +8,20 @@ services:
   api:
     build: ./backend
     ports:
-      - "5000:8080"
+      - "5267:8080"
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ConnectionStrings__Default=Host=db;Database=aisch;Username=dev;Password=dev
-      - Keycloak__Authority=http://keycloak:8080/realms/aisch
-      - Keycloak__RequireHttpsMetadata=false
+      - Keycloak__Authority=${KEYCLOAK_AUTHORITY:-http://localhost:8080/realms/aisch}
+      - Keycloak__ClientId=${KEYCLOAK_CLIENT_ID:-lceda-ai}
+      - Keycloak__Audience=${KEYCLOAK_AUDIENCE:-account}
+      - Keycloak__RequireHttpsMetadata=${KEYCLOAK_REQUIRE_HTTPS:-false}
       - OpenAI__Endpoint=${OPENAI_ENDPOINT}
       - OpenAI__ApiKey=${OPENAI_API_KEY}
       - OpenAI__ModelName=${OPENAI_MODEL_NAME:-gpt-4o}
     depends_on:
       db:
         condition: service_healthy
-      keycloak:
-        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O- http://localhost:8080/healthz || exit 1"]
       interval: 15s
@@ -48,14 +48,7 @@ services:
       # 首次启动时自动执行补充初始化（扩展、权限等）
       - ./docker/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
 
-  keycloak:
-    image: quay.io/keycloak/keycloak:latest
-    command: start-dev
-    environment:
-      KC_BOOTSTRAP_ADMIN_USERNAME: admin
-      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
-    ports:
-      - "8080:8080"
+  # Keycloak 使用外部服务: https://auth.verdure-hiro.cn/realms/maker-community
 
   redis:
     image: redis:7.4-alpine3.21
