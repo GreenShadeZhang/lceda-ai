@@ -1,3 +1,4 @@
+using AiSchGeneratorApi.Contracts;
 using AiSchGeneratorApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -33,6 +34,24 @@ public class SchematicsController(ISchematicService service) : ControllerBase
 
         await Response.WriteAsync("data: [DONE]\n\n", ct);
         await Response.Body.FlushAsync(ct);
+    }
+
+    /// <summary>
+    /// 分页查询当前用户的历史记录，按创建时间倒序排列。
+    /// GET /api/schematics?pageSize=10&amp;pageIndex=1
+    /// </summary>
+    [HttpGet]
+    public async Task<IActionResult> GetHistories(
+        [FromQuery] int pageSize = 10,
+        [FromQuery] int pageIndex = 1,
+        CancellationToken ct = default)
+    {
+        var userId = User.FindFirst("sub")?.Value
+                  ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                  ?? string.Empty;
+
+        var result = await service.GetHistoriesAsync(userId, pageSize, pageIndex, ct);
+        return Ok(ApiResponse<PagedResult<SchematicHistoryDto>>.Ok(result));
     }
 }
 

@@ -63,5 +63,5 @@ development_status:
 
   epic-4: in-progress
   4-1-schematic-history-write: review
-  4-2-history-query-api: ready-for-dev
+  4-2-history-query-api: review
   epic-4-retrospective: optional

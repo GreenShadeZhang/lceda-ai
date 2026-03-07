@@ -1,6 +1,8 @@
 using AiSchGeneratorApi.Agents;
+using AiSchGeneratorApi.Contracts;
 using AiSchGeneratorApi.Infrastructure.Data;
 using AiSchGeneratorApi.Models;
+using Microsoft.EntityFrameworkCore;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -115,6 +117,24 @@ public class SchematicService(
         {
             logger.LogError(ex, "写入生成历史记录失败，userId={UserId}", userId);
         }
+    }
+
+    public async Task<PagedResult<SchematicHistoryDto>> GetHistoriesAsync(
+        string userId, int pageSize = 10, int pageIndex = 1, CancellationToken ct = default)
+    {
+        var query = db.SchematicHistories
+            .Where(h => h.UserId == userId)
+            .OrderByDescending(h => h.CreatedAt);
+
+        var total = await query.CountAsync(ct);
+
+        var items = await query
+            .Skip((pageIndex - 1) * pageSize)
+            .Take(pageSize)
+            .Select(h => new SchematicHistoryDto(h.Id, h.UserInput, h.CreatedAt, h.IsSuccess))
+            .ToListAsync(ct);
+
+        return new PagedResult<SchematicHistoryDto> { Items = items, Total = total };
     }
 
     private async Task<(bool Success, JsonDocument? Doc, SseEvent? Error)> TryParseAsync(
