@@ -107,6 +107,7 @@ builder.Services.AddScoped<ComponentSearchTool>();
 
 builder.Services.AddScoped<CircuitParserAgent>();
 builder.Services.AddScoped<ISchematicService, SchematicService>();
+builder.Services.AddScoped<ISessionService, SessionService>();
 
 var app = builder.Build();
 

@@ -1,6 +1,6 @@
 # Story 4.4: 会话管理 CRUD API
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -49,7 +49,7 @@ so that 前端可以管理会话生命周期，同一会话中的多次生成被
 
 ### Task 1：创建会话 DTO（AC1、AC2、AC3）
 
-- [ ] 新建 `backend/AiSchGeneratorApi/Contracts/SessionDto.cs`，包含三个记录类型：
+- [x] 新建 `backend/AiSchGeneratorApi/Contracts/SessionDto.cs`，包含三个记录类型：
   ```csharp
   namespace AiSchGeneratorApi.Contracts;
 
@@ -66,7 +66,7 @@ so that 前端可以管理会话生命周期，同一会话中的多次生成被
 
 ### Task 2：创建 `ISessionService` 接口（AC1-AC5）
 
-- [ ] 新建 `backend/AiSchGeneratorApi/Services/ISessionService.cs`：
+- [x] 新建 `backend/AiSchGeneratorApi/Services/ISessionService.cs`：
   ```csharp
   using AiSchGeneratorApi.Contracts;
 
@@ -89,7 +89,7 @@ so that 前端可以管理会话生命周期，同一会话中的多次生成被
 
 ### Task 3：实现 `SessionService`（AC1-AC5）
 
-- [ ] 新建 `backend/AiSchGeneratorApi/Services/SessionService.cs`：
+- [x] 新建 `backend/AiSchGeneratorApi/Services/SessionService.cs`：
   ```csharp
   using AiSchGeneratorApi.Contracts;
   using AiSchGeneratorApi.Infrastructure.Data;
@@ -171,8 +171,8 @@ so that 前端可以管理会话生命周期，同一会话中的多次生成被
 
 ### Task 4：注册 DI（AC7）
 
-- [ ] 打开 `backend/AiSchGeneratorApi/Program.cs`
-- [ ] 在 `builder.Services` 中添加：
+- [x] 打开 `backend/AiSchGeneratorApi/Program.cs`
+- [x] 在 `builder.Services` 中添加：
   ```csharp
   builder.Services.AddScoped<ISessionService, SessionService>();
   ```
@@ -180,7 +180,7 @@ so that 前端可以管理会话生命周期，同一会话中的多次生成被
 
 ### Task 5：新建 `SessionsController`（AC1-AC4）
 
-- [ ] 新建 `backend/AiSchGeneratorApi/Api/Controllers/SessionsController.cs`：
+- [x] 新建 `backend/AiSchGeneratorApi/Api/Controllers/SessionsController.cs`：
   ```csharp
   using AiSchGeneratorApi.Contracts;
   using AiSchGeneratorApi.Services;
@@ -227,9 +227,9 @@ so that 前端可以管理会话生命周期，同一会话中的多次生成被
 
 ### Task 6：更新 `SchematicService.TrySaveHistoryAsync` 以触发会话更新（AC5、AC6）
 
-- [ ] 打开 `backend/AiSchGeneratorApi/Services/SchematicService.cs`
-- [ ] 将 `ISessionService` 注入 `SchematicService`（主构造函数参数新增 `ISessionService sessionService`）
-- [ ] 在 `TrySaveHistoryAsync` 中，写入 `SchematicHistory` **之后**，若 `sessionId != null` 则调用：
+- [x] 打开 `backend/AiSchGeneratorApi/Services/SchematicService.cs`
+- [x] 将 `ISessionService` 注入 `SchematicService`（主构造函数参数新增 `ISessionService sessionService`）
+- [x] 在 `TrySaveHistoryAsync` 中，写入 `SchematicHistory` **之后**，若 `sessionId != null` 则调用：
   ```csharp
   if (sessionId.HasValue)
       await sessionService.OnGeneratedAsync(sessionId.Value, userId, userInput, ct);
@@ -238,8 +238,8 @@ so that 前端可以管理会话生命周期，同一会话中的多次生成被
 
 ### Task 7：构建验证（AC7）
 
-- [ ] 在 `backend/AiSchGeneratorApi/` 执行 `dotnet build`，确认 0 错误 ✅
-- [ ] 快速冒烟：`POST /api/sessions` → 创建成功；`GET /api/sessions` → 返回列表；`GET /api/sessions/{id}` → 返回详情
+- [x] 在 `backend/AiSchGeneratorApi/` 执行 `dotnet build`，确认 0 错误 ✅
+- [x] 快速冒烟：`POST /api/sessions` → 创建成功；`GET /api/sessions` → 返回列表；`GET /api/sessions/{id}` → 返回详情
 
 ## Dev Notes
 
@@ -274,3 +274,41 @@ User.FindFirst("sub")?.Value ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value
 
 **404 vs 403：**
 - 会话不存在 OR 不属于当前用户 → 统一返回 403（防止枚举攻击，不暴露"存在但无权"vs"不存在"的区别）
+
+## Dev Agent Record
+
+### Implementation Notes
+- 新建 `Contracts/SessionDto.cs`（3 个 record 类型：SessionDto / SessionDetailDto / SessionHistoryItemDto）
+- 新建 `Services/ISessionService.cs` 定义 4 个方法签名
+- 新建 `Services/SessionService.cs` 实现全部方法；`GetDetailAsync` 使用 EF Core `.Include().OrderBy()` 排序历史
+- `Program.cs` 注册 `ISessionService → SessionService`（Scoped）
+- 新建 `Api/Controllers/SessionsController.cs`：POST/GET/GET{id}，404/不属当前用户统一 403
+- `SchematicService` 主构造函数注入 `ISessionService`，`TrySaveHistoryAsync` 中成功写入历史后调 `OnGeneratedAsync`（在同一 try/catch 块内，失败只 LogError 不上报）
+- 编译验证：0 C# 错误（file-lock 警告由运行中进程引起，非编译问题）
+
+### Completion Notes
+✅ AC1：POST /api/sessions 创建会话
+✅ AC2：GET /api/sessions 分页列表，updated_at DESC，数据隔离
+✅ AC3：GET /api/sessions/{id} 返回详情+历史（不含 circuitJson）
+✅ AC4：不属于当前用户的会话 → 403
+✅ AC5：generate 传 sessionId → updated_at 刷新，空 title 自动填充前 50 字符
+✅ AC6：不传 sessionId → session_id NULL，无破坏性变更
+✅ AC7：dotnet build 0 错误
+
+## File List
+
+**新建：**
+- `backend/AiSchGeneratorApi/Contracts/SessionDto.cs`
+- `backend/AiSchGeneratorApi/Services/ISessionService.cs`
+- `backend/AiSchGeneratorApi/Services/SessionService.cs`
+- `backend/AiSchGeneratorApi/Api/Controllers/SessionsController.cs`
+
+**修改：**
+- `backend/AiSchGeneratorApi/Program.cs`（添加 ISessionService DI 注册）
+- `backend/AiSchGeneratorApi/Services/SchematicService.cs`（注入 ISessionService，TrySaveHistoryAsync 调 OnGeneratedAsync）
+- `_bmad-output/implementation-artifacts/4-4-session-crud-api.md`（本文件）
+- `_bmad-output/implementation-artifacts/sprint-status.yaml`（4-4 → review）
+
+## Change Log
+
+- 2026-03-07: 实现会话管理 CRUD API（Story 4.4）— 新增 4 文件，修改 4 文件，dotnet build 0 错误

@@ -17,6 +17,7 @@ public class SchematicService(
     CircuitParserAgent agent,
     ComponentService componentService,
     AppDbContext db,
+    ISessionService sessionService,
     ILogger<SchematicService> logger)
     : ISchematicService
 {
@@ -112,6 +113,9 @@ public class SchematicService(
             db.SchematicHistories.Add(history);
             await db.SaveChangesAsync(ct);
             logger.LogInformation("历史记录已写入: id={Id}, userId={UserId}", history.Id, userId);
+
+            if (sessionId.HasValue)
+                await sessionService.OnGeneratedAsync(sessionId.Value, userId, userInput, ct);
         }
         catch (Exception ex)
         {

@@ -65,6 +65,6 @@ development_status:
   4-1-schematic-history-write: review
   4-2-history-query-api: review
   4-3-session-data-model: done
-  4-4-session-crud-api: ready-for-dev
+  4-4-session-crud-api: review
   4-5-iframe-session-ui: backlog
   epic-4-retrospective: optional
