@@ -708,3 +708,113 @@ So that 验证多轮上下文记忆完整链路可用，AI 不会忽略历史上
 **Given** IFrame 会话列表（Epic 4.5）完成后
 **When** 多轮对话结束刷新侧边栏
 **Then** 显示同一会话的多条消息，`updatedAt` 刷新，会话标题取第一条 `userInput` 前 50 字符
+
+---
+
+## Epic 6: Docker 镜像打包与数据库自动初始化
+
+**目标：** 将 API 服务容器化，实现「一条命令启动完整本地环境」，并确保 PostgreSQL 数据库架构通过 EF Core Migrations 自动初始化，无需手动执行任何 SQL 脚本。
+
+**覆盖需求：** NFR-08（Docker Compose 一键启动）、DevOps 可维护性
+
+**前置条件：** Epic 1 脚手架完成（Dockerfile 和 docker-compose.yml 基础结构存在）。
+
+---
+
+### Story 6.1: Dockerfile 优化与 Alpine 镜像
+
+As a 开发者,
+I want API 镜像使用 Alpine 基础镜像并打包 HEALTHCHECK，
+So that 镜像体积更小（~100MB vs ~230MB），容器编排平台可自动感知服务就绪状态。
+
+**Acceptance Criteria:**
+
+**Given** `docker build -t aisch-api:local -f backend/Dockerfile backend`
+**When** 构建完成
+**Then** 镜像使用 `mcr.microsoft.com/dotnet/aspnet:10.0-alpine` 运行时基础，镜像大小 < 150MB
+
+**Given** 容器启动后 30s 内
+**When** Docker 执行 HEALTHCHECK `wget -q -O- http://localhost:8080/healthz`
+**Then** `/healthz` 端点返回 HTTP 200 `{"status":"healthy"}`，容器状态变为 `healthy`
+
+**Given** `backend/.dockerignore` 存在
+**When** 执行 docker build
+**Then** `bin/`、`obj/`、`.vs/` 等构建产物不被包含在构建上下文，构建速度提升
+
+---
+
+### Story 6.2: EF Core Migrations 容器启动自动执行
+
+As a 运维,
+I want API 容器启动时自动执行 `Database.Migrate()`，
+So that 首次部署或版本升级后无需手动 `dotnet ef database update`，数据库架构自动与代码同步。
+
+**Acceptance Criteria:**
+
+**Given** 全新 PostgreSQL 容器（空数据库 `aisch`）
+**When** API 容器首次启动
+**Then** `Database.Migrate()` 在 `app.Run()` 前执行，自动创建 `__EFMigrationsHistory`、`schematic_histories`、`schematic_sessions` 等表，API 正常响应请求
+
+**Given** 数据库已是最新 Schema
+**When** API 容器重启
+**Then** `Database.Migrate()` 检测到无待执行迁移，快速跳过，启动时间开销 < 1s
+
+**Given** PostgreSQL 容器尚未就绪（启动竞争）
+**When** API 容器尝试执行 Migrate
+**Then** Npgsql `EnableRetryOnFailure(maxRetry=5)` 自动重试，最终成功连接并执行迁移，无崩溃
+
+**Given** 非 Production 环境（Development / Docker）或 `Database:AutoMigrate=true`
+**When** API 启动
+**Then** 执行自动迁移；Production 环境默认不自动迁移（需显式配置），避免生产事故
+
+---
+
+### Story 6.3: docker-compose.yml 生产级配置
+
+As a 开发者,
+I want docker-compose.yml 包含完整的环境变量、依赖健康检查和 init-db.sql 挂载，
+So that `docker compose up -d` 一键启动 API + PostgreSQL + Keycloak，无需手动干预。
+
+**Acceptance Criteria:**
+
+**Given** `.env` 文件配置了 `OPENAI_API_KEY`
+**When** 执行 `docker compose up -d` 
+**Then** API 容器设置 `ASPNETCORE_ENVIRONMENT=Development`（启用 CORS），`Keycloak__RequireHttpsMetadata=false`（容器内 HTTP 通信），`ConnectionStrings__Default` 指向内部 db 服务
+
+**Given** `db` 容器尚未通过健康检查
+**When** docker compose 启动
+**Then** `api` 容器通过 `depends_on: db: condition: service_healthy` 等待 PostgreSQL 就绪后再启动
+
+**Given** `docker/init-db.sql` 挂载到 `/docker-entrypoint-initdb.d/`
+**When** PostgreSQL 容器首次初始化
+**Then** 自动执行 init-db.sql，为 `aisch` 数据库启用 `uuid-ossp` 扩展并确认权限
+
+**Given** `scripts/health-check.ps1` 执行
+**When** 所有容器处于运行状态
+**Then** API `/healthz`、PostgreSQL `pg_isready`、Keycloak `/health/ready` 均返回健康状态
+
+---
+
+### Story 6.4: 管理脚本套件
+
+As a 开发者,
+I want 提供 `scripts/` 下的 PowerShell 管理脚本，
+So that 不熟悉 Docker 命令的团队成员也能一键操作本地环境。
+
+**Acceptance Criteria:**
+
+**Given** `scripts/start-local.ps1` 执行
+**When** 未找到 `.env` 文件
+**Then** 自动从 `.env.example` 复制并提示填写 `OPENAI_API_KEY` 后退出
+
+**Given** `scripts/start-local.ps1 -Build` 执行
+**When** `-Build` 参数传入
+**Then** 先执行 `docker compose build api` 重新构建镜像，再启动所有服务
+
+**Given** `scripts/stop-local.ps1 -RemoveVolumes` 执行
+**When** `-RemoveVolumes` 参数传入
+**Then** 执行 `docker compose down -v`（提示数据将丢失）
+
+**Given** `scripts/build-image.ps1 -Tag aisch-api:test` 执行
+**When** 构建成功
+**Then** 输出镜像大小与创建时间，退出码为 0

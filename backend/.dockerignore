@@ -1,0 +1,9 @@
+**/bin/
+**/obj/
+**/*.user
+**/.vs/
+**/*.suo
+**/node_modules/
+Dockerfile
+.dockerignore
+**/*.md

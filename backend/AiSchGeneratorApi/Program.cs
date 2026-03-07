@@ -15,8 +15,11 @@ using Microsoft.EntityFrameworkCore;
 var builder = WebApplication.CreateBuilder(args);
 
 // EF Core + PostgreSQL (snake_case naming via EFCore.NamingConventions)
+// EnableRetryOnFailure: 容器启动时 DB 可能尚未就绪，自动重试 5 次
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("Default"))
+    options.UseNpgsql(
+        builder.Configuration.GetConnectionString("Default"),
+        o => o.EnableRetryOnFailure(maxRetryCount: 5, maxRetryDelay: TimeSpan.FromSeconds(10), errorCodesToAdd: null))
            .UseSnakeCaseNamingConvention());
 
 // Controllers with camelCase JSON serialization
@@ -47,7 +50,8 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     {
         options.Authority = builder.Configuration["Keycloak:Authority"];
         options.Audience  = builder.Configuration["Keycloak:Audience"];
-        options.RequireHttpsMetadata = true;
+        // 容器内部 Keycloak 使用 HTTP，通过配置项关闭 HTTPS 强制验证（生产环境应保持 true）
+        options.RequireHttpsMetadata = builder.Configuration.GetValue("Keycloak:RequireHttpsMetadata", true);
 
         // 返回统一格式的 401 响应体 (Story 2.3 AC)
         options.Events = new JwtBearerEvents
@@ -111,6 +115,14 @@ builder.Services.AddScoped<ISessionService, SessionService>();
 
 var app = builder.Build();
 
+// 容器启动时自动执行 EF Core Migrations（需显式设置 Database:AutoMigrate=true）
+if (app.Configuration.GetValue("Database:AutoMigrate", false))
+{
+    using var scope = app.Services.CreateScope();
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    db.Database.Migrate();
+}
+
 if (app.Environment.IsDevelopment())
 {
     app.UseCors();
@@ -118,6 +130,9 @@ if (app.Environment.IsDevelopment())
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+// 健康检查端点（Docker HEALTHCHECK 使用）
+app.MapGet("/healthz", () => Results.Ok(new { status = "healthy" })).AllowAnonymous();
 
 app.MapControllers();
 
