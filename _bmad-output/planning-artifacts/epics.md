@@ -31,6 +31,8 @@ This document provides the complete epic and story breakdown for **AI EDA 原理
 | FR-06 | 原理图生成完成后自动保存文档 | Architecture |
 | FR-07 | 用户需通过 OIDC 登录（Keycloak）后才能使用 AI 生成功能 | Architecture (ADR-05) |
 | FR-08 | AI 生成的原理图历史记录需持久化存储，用户可查询 | Architecture (ADR-04/ADR-07) |
+| FR-09 | 用户的对话按「会话」分组管理，支持创建新会话、列出历史会话、在同一会话内关联多轮消息 | 用户需求 v2 |
+| FR-10 | AI 普通文字回复直接追加到聊天气泡，仅当后端返回原理图结构化数据时前端才触发 EDA SDK 渲染，两种响应类型通过 SSE 事件类型区分 | 用户需求 v2 |
 
 ---
 
@@ -82,6 +84,8 @@ This document provides the complete epic and story breakdown for **AI EDA 原理
 | FR-06 | Epic 3 | eda.sch_Document.save() |
 | FR-07 | Epic 2 | Keycloak 设备码登录（RFC 8628） |
 | FR-08 | Epic 4 | SchematicHistory 持久化 |
+| FR-09 | Epic 4 (4.3/4.4/4.5) | 会话分组管理 —— sessions 表 + 会话 CRUD API + IFrame 会话列表 UI |
+| FR-10 | Epic 4 (4.5) / Epic 5 (5.1) | SSE 事件类型区分（text / schematic），智能渲染控制 |
 
 ---
 
@@ -111,11 +115,11 @@ This document provides the complete epic and story breakdown for **AI EDA 原理
 
 ---
 
-### Epic 4: 生成历史记录持久化
+### Epic 4: 会话管理与生成历史持久化
 
-**目标：** 用户的每次生成记录都被持久化存储，可通过 API 查询历史原理图。
+**目标：** 用户的每次生成记录都被持久化存储，对话按会话分组，用户可查看历史会话列表、在同一会话内关联多轮消息，AI 普通文字回复与原理图结构数据走不同渲染路径。
 
-**覆盖需求：** FR-08
+**覆盖需求：** FR-08、FR-09、FR-10（部分）
 
 ---
 
@@ -463,9 +467,9 @@ So that 验证从自然语言输入到原理图生成的完整链路可用，通
 
 ---
 
-## Epic 4: 生成历史记录持久化
+## Epic 4: 会话管理与生成历史持久化
 
-用户每次生成原理图的记录（输入需求、电路 JSON、生成时间）持久化存储到 PostgreSQL，用户可通过 API 查询历史记录，IFrame 展示简单历史列表。
+用户每次生成原理图的记录都持久化到 PostgreSQL，对话按「会话」分组：用户打开插件后自动加载最新会话，会话列表可点击切换，同一会话内的消息按序展示。后端 SSE 流新增事件类型字段，前端根据类型区分普通文字回复（直接追加）与原理图数据（触发 EDA SDK 渲染），不再每次生成都重新渲染整页。
 
 ### Story 4.1: 原理图生成历史写入
 
@@ -519,82 +523,188 @@ So that 我可以了解历史生成情况，后续扩展时支持重新加载历
 
 ---
 
-## Epic 5（可选）: 基于 Microsoft Agent Framework 的会话管理升级
+### Story 4.3: 会话数据模型扩展
 
-**目标：** 将 `CircuitParserAgent` 接入 Microsoft Agent Framework 的会话生命周期，实现多轮对话记忆——Agent 在同一 Session 内记住历史原理图上下文，支持用户在后续请求中增量修改已有电路。
-
-**覆盖需求：** FR-08 扩展（多轮会话历史）
-
-**触发条件：** 产品验证多轮修改场景（如"在上次的 LDO 电路基础上增加一个 LED 指示灯"）有用户需求时实施。
-
-> **背景：** Epic 4 已通过 EF Core 直写实现单次生成历史持久化。本 Epic 在此基础上引入框架级会话抽象，支持跨请求的上下文记忆。框架调研详见 `architecture.md` 的 "Epic 5+ 可选规划" 章节。
-
----
-
-### Story 5.1: 实现 PostgresChatHistoryProvider
-
-As a 后端 AI 服务,
-I want 实现基于 PostgreSQL 的 `ChatHistoryProvider`，使 Agent 在同一 Session 内自动加载历史对话上下文,
-So that 用户可以在同一会话中发出增量修改指令，Agent 能理解上下文而无需用户重复描述。
+As a 系统,
+I want 在数据库中引入 `sessions` 会话表，并将 `schematic_histories` 通过外键关联到会话,
+So that 用户的每次对话可被分组为同一会话，后续支持会话维度的消息查询与多轮上下文记忆。
 
 **Acceptance Criteria:**
 
-**Given** 用户在同一 `sessionId` 下发起第二次生成请求
-**When** `CircuitParserAgent` 通过 `RunStreamingAsync` 被调用
-**Then** `PostgresChatHistoryProvider.ProvideChatHistoryAsync` 从 `schematic_histories` 表按 `session_id` 加载历史记录，转换为 `ChatMessage[]` 注入 LLM 上下文
+**Given** 执行新 EF Core 迁移
+**When** `dotnet ef database update`
+**Then** 数据库出现 `sessions` 表，含 `id`（UUID PK）、`user_id`（varchar，有索引 `idx_sessions_user_id`）、`title`（varchar，默认取首条 user_input 前 50 字符）、`created_at`（UTC）、`updated_at`（UTC，每次写入新消息时更新），列名全为 `snake_case`
 
-**Given** Agent 完成本次生成
-**When** `StoreChatHistoryAsync` 被调用
-**Then** 新的对话轮次通过 `TrySaveHistoryAsync` 写入 `schematic_histories`，`session_id` 与请求一致
+**Given** `schematic_histories` 表
+**When** 迁移执行完成
+**Then** 新增 `session_id`（UUID，可为 NULL，外键 → `sessions.id`，`ON DELETE SET NULL`），历史数据中 `session_id` 保持 NULL 以保证向后兼容
 
-**Given** `sessionId` 为 null（独立会话）
-**When** `ProvideChatHistoryAsync` 被调用
-**Then** 返回空历史列表，Agent 以无上下文模式运行（与 Epic 4 行为一致）
+**Given** EF Core 实体 `Session` 和 `SchematicHistory`
+**When** 检查关系配置
+**Then** `Session` 有导航属性 `ICollection<SchematicHistory> Histories`，`SchematicHistory` 有可空导航属性 `Session? Session`，ORM 映射正确
 
-**Given** PostgreSQL 读取历史失败
-**When** `ProvideChatHistoryAsync` 抛出异常
-**Then** 异常被捕获，Agent 降级为无上下文模式运行，记录 `LogWarning`，不中断生成流程
-
----
-
-### Story 5.2: CircuitParserAgent 改造为 AIAgent 派生类
-
-As a 后端 AI 服务,
-I want 将 `CircuitParserAgent` 改造为基于 Microsoft Agent Framework `AIAgent` 的派生类，注册 `PostgresChatHistoryProvider`,
-So that Agent 可通过框架生命周期自动管理会话历史，`SchematicService` 调用更统一。
-
-**Acceptance Criteria:**
-
-**Given** `CircuitParserAgent` 改造完成
-**When** `SchematicService` 调用 `agent.RunStreamingAsync(session, userInput, ct)`
-**Then** 框架自动触发 `ProvideChatHistoryAsync`（注入历史）→ LLM 调用 → `StoreChatHistoryAsync`（存储历史）生命周期钩子
-
-**Given** 改造后的 Agent
-**When** 执行 `dotnet build`
-**Then** 无编译错误，现有 Epic 3 单次生成功能（无 sessionId）行为不变
-
-**Given** 注册 `PostgresChatHistoryProvider`
-**When** DI 容器构建
-**Then** `Program.cs` 中正确注册，无循环依赖
+**Given** `dotnet build`
+**When** 迁移文件生成后编译
+**Then** 无编译错误，现有 Story 4.1/4.2 功能行为不变
 
 ---
 
-### Story 5.3: AgentSession 与多轮对话端到端验证
+### Story 4.4: 会话管理 CRUD API
 
 As a 用户,
-I want 在同一会话中先生成 LDO 电路，再输入"增加一个 LED 电源指示灯"后 Agent 能在原电路基础上增量修改,
-So that 验证多轮会话记忆的完整链路可用。
+I want 通过 API 创建、列出和获取会话，生成接口支持传入 sessionId 关联消息,
+So that 前端可以管理会话生命周期，同一会话中的多次生成被正确归组。
 
 **Acceptance Criteria:**
 
-**Given** 用户第一次请求生成"5V 转 3.3V LDO 供电模块"，服务器返回 `sessionId`
-**When** 用户第二次请求"在上述电路基础上增加一个 LED 电源指示灯"，携带同一 `sessionId`
-**Then** LLM 收到包含第一次电路上下文的历史消息，生成结果包含 LDO 电路 + LED 及限流电阻，无需用户重复描述 LDO 电路
+**Given** 已登录用户调用 `POST /api/sessions`（body 可为空）
+**When** 请求携带有效 JWT
+**Then** 在 `sessions` 表创建一条属于当前用户的会话，返回 `{"success": true, "data": {"id": "...", "title": "", "createdAt": "..."}}`
 
-**Given** 跨请求会话
-**When** 两次请求之间后端重启（模拟服务重启）
-**Then** 第二次请求仍能从 PostgreSQL 恢复历史上下文，不因内存丢失而失效
+**Given** 已登录用户调用 `GET /api/sessions?pageSize=20&pageIndex=1`
+**When** 请求携带有效 JWT
+**Then** 返回当前用户的会话列表，按 `updated_at` 降序排列，每条含 `id`、`title`、`createdAt`、`updatedAt`，仅返回自己的会话（数据隔离）
 
-**Given** 无效 `sessionId`（数据库不存在）
-**When** 携带该 `sessionId` 请求
-**Then** 降级为无上下文模式运行，返回正常生成结果，不返回 404 或 500
+**Given** 已登录用户调用 `GET /api/sessions/{sessionId}`
+**When** 会话属于当前用户
+**Then** 返回会话详情，含 `histories[]` 消息列表（按 `created_at` 升序），每条消息含 `id`、`userInput`、`isSuccess`、`createdAt`（不含 `circuitJson` 减少传输量）
+
+**Given** 调用 `GET /api/sessions/{sessionId}`
+**When** 会话不属于当前用户
+**Then** 返回 403，不泄露其他用户数据
+
+**Given** `POST /api/schematics/generate` 请求 body 新增可选字段 `sessionId`
+**When** 传入有效 `sessionId`（属于当前用户）
+**Then** 生成成功后写入 `schematic_histories` 时关联该 `session_id`，并更新 `sessions.updated_at`；若 session 的 title 仍为空，则取本次 `userInput` 前 50 字符作为 title
+
+**Given** `POST /api/schematics/generate` 未传 `sessionId`
+**When** 生成成功
+**Then** `schematic_histories` 记录的 `session_id` 为 NULL，与 Story 4.1 行为一致，无破坏性变更
+
+---
+
+### Story 4.5: IFrame 会话列表 UI 与智能响应渲染
+
+As a 用户,
+I want 插件面板打开后自动加载最近会话，侧边栏展示会话列表可点击切换，聊天时普通文字直接追加显示，只有收到原理图数据才触发 EDA 重渲染,
+So that 我可以管理多个对话上下文，普通闲聊与原理图生成不再混用同一渲染路径，体验更流畅。
+
+**Acceptance Criteria:**
+
+**Given** 用户已登录，插件 IFrame 打开
+**When** 初始化完成
+**Then** 自动调用 `GET /api/sessions?pageSize=20&pageIndex=1`，加载最近会话列表并渲染到会话侧边栏；自动选中 `updatedAt` 最新一条会话并加载其消息历史
+
+**Given** 会话侧边栏
+**When** 用户点击某条会话
+**Then** 调用 `GET /api/sessions/{sessionId}` 加载消息列表，聊天区域渲染该会话所有历史消息（用户输入 + AI 回复），侧边栏高亮选中项
+
+**Given** 会话侧边栏顶部有「新建对话」按钮
+**When** 用户点击
+**Then** 调用 `POST /api/sessions` 创建新会话，侧边栏追加新条目并自动选中，聊天区域清空
+
+**Given** 用户在当前会话中输入需求并点击生成
+**When** 请求发送
+**Then** `POST /api/schematics/generate` body 携带当前 `sessionId`，生成完成后侧边栏对应会话的 `updatedAt` 刷新
+
+**Given** 后端 SSE 流中每个事件携带 `eventType` 字段（值为 `"text"` 或 `"schematic"`）
+**When** IFrame 收到 `eventType: "text"` 的 SSE 事件
+**Then** 将文字内容直接追加到当前聊天气泡，不调用 EDA SDK，不发送 `GENERATE_REQUEST` 消息
+
+**Given** SSE 流中收到 `eventType: "schematic"` 的事件（含完整 `circuitJson`）
+**When** IFrame 处理该事件
+**Then** 通过 `eda.sys_MessageBus.publish('GENERATE_REQUEST', circuitJson)` 向主线程发送消息，触发 EDA SDK 渲染；聊天气泡同步显示"原理图已生成"状态徽标
+
+**Given** 后端 SSE 流不携带 `eventType`（旧版兼容）
+**When** IFrame 解析
+**Then** 降级为旧行为：流式追加文字，流结束时若 data 包含合法 `circuitJson` 则触发渲染，保持向后兼容
+
+---
+
+## Epic 5: 多轮对话上下文记忆（AI 智能升级）
+
+**目标：** 在 Epic 4 建立的会话基础设施之上，让 `CircuitParserAgent` 真正「读懂」历史上下文——当用户在同一会话中发出增量修改指令时，Agent 能理解前序电路并输出增量结果，而不是重新生成全新电路。
+
+**覆盖需求：** FR-09 扩展（多轮 AI 上下文）、FR-10 完整实现（后端 SSE eventType 字段）
+
+**前置条件：** Epic 4 全部 Story（4.1–4.5）完成，`sessions` 表和会话 API 可用。
+
+> **与 Epic 4 的边界：** Epic 4 负责「数据分组存储 + UI 入口」，Epic 5 负责「AI 利用历史数据做更智能的推理」。两者可独立发布：Epic 4 完成后用户已能管理会话并享受分类型渲染；Epic 5 完成后 AI 可跨轮次理解上下文。
+
+---
+
+### Story 5.1: 后端 SSE 协议扩展（eventType 字段）
+
+As a 后端,
+I want 在 SSE 流的每个事件中附加 `eventType` 字段以区分文字内容与原理图数据,
+So that 前端可以根据事件类型走不同渲染路径，不再对所有流式输出统一处理。
+
+**Acceptance Criteria:**
+
+**Given** `POST /api/schematics/generate` 开始输出 SSE 流
+**When** 后端推送中间文字状态
+**Then** 每个 SSE 事件格式为 `data: {"eventType": "text", "content": "..."}\n\n`
+
+**Given** Agent 完成解析，输出最终电路 JSON
+**When** 推送终态事件
+**Then** SSE 事件格式为 `data: {"eventType": "schematic", "circuitJson": {...}}\n\n`，随后发送 `data: [DONE]\n\n`
+
+**Given** 生成失败（Agent 异常）
+**When** 推送错误事件
+**Then** SSE 事件格式为 `data: {"eventType": "error", "code": "...", "message": "..."}\n\n`
+
+**Given** `dotnet build` 与现有 Epic 3 集成测试
+**When** 改造完成
+**Then** 无编译错误，LLM 调用链路、ComponentSearchTool 行为不变
+
+---
+
+### Story 5.2: CircuitParserAgent 多轮上下文注入
+
+As a 后端 AI 服务,
+I want CircuitParserAgent 在处理请求时从 `sessions` 关联的 `schematic_histories` 中加载历史消息，注入到 LLM 上下文,
+So that 用户可以在同一会话中发出「增加一个 LED」这类增量指令，Agent 能基于上一次电路结果给出正确输出。
+
+**Acceptance Criteria:**
+
+**Given** 请求携带 `sessionId`，该会话已有历史消息
+**When** `CircuitParserAgent` 被调用
+**Then** 从数据库加载该 `sessionId` 下按 `created_at` 升序的历史记录，转换为 `ChatMessage[]`（`user` 角色含 `userInput`，`assistant` 角色含前次 `circuitJson` 摘要）注入 LLM 上下文
+
+**Given** `sessionId` 为 null 或会话无历史
+**When** Agent 调用 LLM
+**Then** 以空历史运行，行为与 Epic 3 单次生成完全一致，无性能额外开销
+
+**Given** PostgreSQL 历史加载失败
+**When** 数据库异常
+**Then** 捕获异常，降级为无历史模式运行，记录 `LogWarning`，不中断生成流程，返回正常生成结果
+
+**Given** `dotnet build` + 现有单次生成流程
+**When** 改造完成
+**Then** Epic 3 验收用例（LDO 端到端）行为不变
+
+---
+
+### Story 5.3: 多轮对话端到端验证
+
+As a 用户,
+I want 在同一会话中先生成 LDO 电路，再输入「增加一个 LED 电源指示灯」后 Agent 在原电路基础上增量修改,
+So that 验证多轮上下文记忆完整链路可用，AI 不会忽略历史上下文重新生成完整电路。
+
+**Acceptance Criteria:**
+
+**Given** 用户在会话 A 第一次请求「5V 转 3.3V LDO 供电模块」生成成功
+**When** 在同一会话 A 第二次请求「在上述电路基础上增加一个 LED 电源指示灯」
+**Then** LLM 收到包含第一次电路 JSON 的历史上下文，生成结果在原 LDO 电路基础上新增 LED + 限流电阻，用户无需重新描述 LDO 电路
+
+**Given** 两次请求之间后端服务重启
+**When** 第二次请求携带相同 `sessionId`
+**Then** Agent 从 PostgreSQL 恢复历史上下文，不因内存重置而失效
+
+**Given** 无效或不存在的 `sessionId`
+**When** 请求携带该 `sessionId`
+**Then** Agent 降级为无上下文单次生成，返回正常结果，不返回 404/500
+
+**Given** IFrame 会话列表（Epic 4.5）完成后
+**When** 多轮对话结束刷新侧边栏
+**Then** 显示同一会话的多条消息，`updatedAt` 刷新，会话标题取第一条 `userInput` 前 50 字符
