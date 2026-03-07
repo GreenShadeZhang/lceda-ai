@@ -321,99 +321,26 @@ async function doSilentRefresh() {
 }
 
 // ---------------------------------------------------------------------------
-// Story 4.2: 历史面板
+// Story 3.1 / 4.5: 面板切换
 // ---------------------------------------------------------------------------
 function showChatPanel() {
   document.getElementById('chat-messages').style.display = '';
-  document.getElementById('history-panel').classList.remove('visible');
   document.getElementById('session-panel').classList.remove('visible');
   document.querySelector('.input-area').style.display = '';
   document.getElementById('gen-status').style.display = '';
   document.getElementById('tab-chat').classList.add('active');
-  document.getElementById('tab-history').classList.remove('active');
-  document.getElementById('tab-sessions').classList.remove('active');
-}
-
-function showHistoryPanel() {
-  document.getElementById('chat-messages').style.display = 'none';
-  document.getElementById('history-panel').classList.add('visible');
-  document.getElementById('session-panel').classList.remove('visible');
-  document.querySelector('.input-area').style.display = 'none';
-  document.getElementById('gen-status').style.display = 'none';
-  document.getElementById('tab-chat').classList.remove('active');
-  document.getElementById('tab-history').classList.add('active');
   document.getElementById('tab-sessions').classList.remove('active');
 }
 
 function showSessionPanel() {
   document.getElementById('chat-messages').style.display = 'none';
-  document.getElementById('history-panel').classList.remove('visible');
   document.getElementById('session-panel').classList.add('visible');
   document.querySelector('.input-area').style.display = 'none';
   document.getElementById('gen-status').style.display = 'none';
   document.getElementById('tab-chat').classList.remove('active');
-  document.getElementById('tab-history').classList.remove('active');
   document.getElementById('tab-sessions').classList.add('active');
 }
 
-async function loadHistory() {
-  const panel = document.getElementById('history-panel');
-  panel.innerHTML = '<div class="history-loading">正在加载历史记录...</div>';
-
-  try {
-    const res = await fetch(`${BACKEND_API}/api/schematics?pageSize=10&pageIndex=1`, {
-      headers: { 'Authorization': `Bearer ${currentAccessToken}` },
-    });
-
-    if (res.status === 401) {
-      panel.innerHTML = '<div class="history-empty">登录已过期，请重新登录</div>';
-      return;
-    }
-
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}`);
-    }
-
-    const json = await res.json();
-    if (!json.success) {
-      throw new Error(json.error?.message || '服务器返回失败');
-    }
-
-    renderHistoryList(json.data.items, json.data.total);
-  } catch (e) {
-    dbg('loadHistory error:', e);
-    panel.innerHTML = `<div class="history-empty">加载失败：${escapeHtml(e.message || String(e))}</div>`;
-  }
-}
-
-function renderHistoryList(items, total) {
-  const panel = document.getElementById('history-panel');
-  if (!items || items.length === 0) {
-    panel.innerHTML = '<div class="history-empty">暂无历史记录</div>';
-    return;
-  }
-
-  const header = `<div class="history-loading" style="text-align:left;padding:0 0 8px;">共 ${total} 条记录，展示最近 ${items.length} 条</div>`;
-  const rows = items.map(item => {
-    const timeStr = new Date(item.createdAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
-    const badge = item.isSuccess
-      ? '<span class="history-badge success">成功</span>'
-      : '<span class="history-badge failed">失败</span>';
-    return `<div class="history-item">
-      <span class="history-input">${escapeHtml(item.userInput)}</span>
-      <div class="history-meta">
-        <span class="history-time">${escapeHtml(timeStr)}</span>
-        ${badge}
-      </div>
-    </div>`;
-  }).join('');
-
-  panel.innerHTML = header + rows;
-}
-
-// ---------------------------------------------------------------------------
-// Story 4.5: 会话管理
-// ---------------------------------------------------------------------------
 async function loadSessions() {
   const listEl = document.getElementById('session-list');
   if (listEl) listEl.innerHTML = '<div class="session-empty">正在加载会话...</div>';
@@ -558,10 +485,6 @@ function setupAppEventListeners() {
   });
 
   document.getElementById('tab-chat').addEventListener('click', showChatPanel);
-  document.getElementById('tab-history').addEventListener('click', () => {
-    showHistoryPanel();
-    loadHistory();
-  });
   document.getElementById('tab-sessions').addEventListener('click', showSessionPanel);
   document.getElementById('session-new-btn').addEventListener('click', createNewSession);
 }
