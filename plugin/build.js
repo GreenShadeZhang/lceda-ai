@@ -93,6 +93,12 @@ async function main() {
     // 添加 extension.json（ZIP 根目录）
     archive.file(path.join(ROOT, 'extension.json'), { name: 'extension.json' });
 
+    // 添加图标（如果存在）
+    const iconSrc = path.join(ROOT, 'icon.png');
+    if (fs.existsSync(iconSrc)) {
+      archive.file(iconSrc, { name: 'icon.png' });
+    }
+
     // 添加编译后 JS（ZIP 内路径：dist/index.js，与 extension.json entry 对应）
     archive.file(compiledJs, { name: 'dist/index.js' });
 

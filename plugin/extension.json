@@ -1,10 +1,11 @@
 {
   "name": "ai-sch-generator",
   "uuid": "6d3ec3aea4da468c9b54a3cfa7ecd996",
-  "displayName": "AI 原理图生成器",
-  "description": "通过自然语言描述自动生成立创EDA原理图的AI插件",
+  "displayName": "绿荫智绘",
+  "description": "绿荫出品 · 通过自然语言描述自动生成立创EDA原理图的AI插件",
   "version": "0.1.0",
-  "publisher": "verdure-hiro",
+  "publisher": "绿荫阿广",
+  "icon": "icon.png",
   "engines": {
     "eda": "^2.3.0"
   },
@@ -17,7 +18,7 @@
     "sch": [
       {
         "id": "ai-sch-generator",
-        "title": "AI 原理图生成器",
+        "title": "绿荫智绘",
         "menuItems": [
           {
             "id": "open-ai-panel",
