@@ -387,6 +387,119 @@
       padding: 16px 0;
     }
 
+    /* ─── Story 4.5: 会话面板 ─── */
+    #session-indicator-bar {
+      display: none;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 12px;
+      font-size: 11px;
+      color: #6c7086;
+      background: #181825;
+      border-bottom: 1px solid #313244;
+      flex-shrink: 0;
+    }
+
+    #session-indicator-bar.visible { display: flex; }
+
+    #session-indicator-bar .indicator-label { color: #585b70; }
+
+    #session-indicator {
+      color: #89b4fa;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 180px;
+    }
+
+    #session-panel {
+      display: none;
+      flex-direction: column;
+      flex: 1;
+      overflow: hidden;
+      min-height: 0;
+    }
+
+    #session-panel.visible { display: flex; }
+
+    .session-panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      border-bottom: 1px solid #313244;
+      background: #181825;
+      flex-shrink: 0;
+    }
+
+    .session-panel-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: #6c7086;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .btn-session-new {
+      font-size: 11px;
+      padding: 4px 10px;
+      background: transparent;
+      color: #89b4fa;
+      border: 1px solid #89b4fa;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .btn-session-new:hover { background: rgba(137,180,250,0.1); }
+
+    #session-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .session-item {
+      background: #313244;
+      border-radius: 6px;
+      padding: 9px 12px;
+      cursor: pointer;
+      transition: background 0.15s;
+      border-left: 3px solid transparent;
+    }
+
+    .session-item:hover { background: #45475a; }
+
+    .session-item.active {
+      border-left-color: #89b4fa;
+      background: #3a3c52;
+    }
+
+    .session-title {
+      font-size: 13px;
+      color: #cdd6f4;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .session-date {
+      font-size: 11px;
+      color: #6c7086;
+      margin-top: 2px;
+    }
+
+    .session-empty {
+      text-align: center;
+      color: #6c7086;
+      font-size: 12px;
+      padding: 20px 8px;
+    }
+
     /* ---- 加载状态 ---- */
     #loading-section {
       display: flex;
@@ -485,9 +598,21 @@
     <div class="tab-bar">
       <button id="tab-chat" class="tab-btn active">💬 对话</button>
       <button id="tab-history" class="tab-btn">📋 历史</button>
+      <button id="tab-sessions" class="tab-btn">🗂️ 会话</button>
+    </div>
+    <div id="session-indicator-bar">
+      <span class="indicator-label">当前会话：</span>
+      <span id="session-indicator">无</span>
     </div>
     <div id="chat-messages"></div>
     <div id="history-panel"></div>
+    <div id="session-panel">
+      <div class="session-panel-header">
+        <span class="session-panel-title">会话列表</span>
+        <button id="session-new-btn" class="btn-session-new">＋ 新建对话</button>
+      </div>
+      <div id="session-list"></div>
+    </div>
     <div class="input-area">
       <textarea id="user-input" rows="3"
         placeholder="描述您需要的电路，例如：5V 转 3.3V LDO 供电模块&#10;Ctrl+Enter 发送"></textarea>

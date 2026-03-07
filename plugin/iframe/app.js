@@ -47,6 +47,7 @@ let refreshTimer        = null;
 let pollAbort           = false;
 let isGenerating        = false;
 let generateTaskCleanup = null;
+let currentSessionId    = null;
 
 // ---------------------------------------------------------------------------
 // 调试日志
@@ -131,6 +132,7 @@ function showAppUI(at, rt) {
   showSection('app-section');
   scheduleTokenRefresh(at);
   setupAppEventListeners();
+  loadSessions();
 }
 
 // ---------------------------------------------------------------------------
@@ -324,19 +326,34 @@ async function doSilentRefresh() {
 function showChatPanel() {
   document.getElementById('chat-messages').style.display = '';
   document.getElementById('history-panel').classList.remove('visible');
+  document.getElementById('session-panel').classList.remove('visible');
   document.querySelector('.input-area').style.display = '';
   document.getElementById('gen-status').style.display = '';
   document.getElementById('tab-chat').classList.add('active');
   document.getElementById('tab-history').classList.remove('active');
+  document.getElementById('tab-sessions').classList.remove('active');
 }
 
 function showHistoryPanel() {
   document.getElementById('chat-messages').style.display = 'none';
   document.getElementById('history-panel').classList.add('visible');
+  document.getElementById('session-panel').classList.remove('visible');
   document.querySelector('.input-area').style.display = 'none';
   document.getElementById('gen-status').style.display = 'none';
   document.getElementById('tab-chat').classList.remove('active');
   document.getElementById('tab-history').classList.add('active');
+  document.getElementById('tab-sessions').classList.remove('active');
+}
+
+function showSessionPanel() {
+  document.getElementById('chat-messages').style.display = 'none';
+  document.getElementById('history-panel').classList.remove('visible');
+  document.getElementById('session-panel').classList.add('visible');
+  document.querySelector('.input-area').style.display = 'none';
+  document.getElementById('gen-status').style.display = 'none';
+  document.getElementById('tab-chat').classList.remove('active');
+  document.getElementById('tab-history').classList.remove('active');
+  document.getElementById('tab-sessions').classList.add('active');
 }
 
 async function loadHistory() {
@@ -395,6 +412,135 @@ function renderHistoryList(items, total) {
 }
 
 // ---------------------------------------------------------------------------
+// Story 4.5: 会话管理
+// ---------------------------------------------------------------------------
+async function loadSessions() {
+  const listEl = document.getElementById('session-list');
+  if (listEl) listEl.innerHTML = '<div class="session-empty">正在加载会话...</div>';
+
+  try {
+    const res = await fetch(`${BACKEND_API}/api/sessions?pageSize=20&pageIndex=1`, {
+      headers: { 'Authorization': `Bearer ${currentAccessToken}` },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error?.message || '请求失败');
+
+    const sessions = json.data?.items || [];
+    renderSessionList(sessions);
+
+    // 自动选中最新一条会话并加载其历史
+    if (sessions.length > 0) {
+      await selectSession(sessions[0], false);
+    }
+  } catch (e) {
+    dbg('loadSessions error:', e);
+    if (listEl) listEl.innerHTML = `<div class="session-empty">加载失败：${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function renderSessionList(sessions) {
+  const listEl = document.getElementById('session-list');
+  if (!listEl) return;
+  listEl.innerHTML = '';
+  if (sessions.length === 0) {
+    listEl.innerHTML = '<div class="session-empty">暂无会话，点击「新建对话」开始</div>';
+    return;
+  }
+  sessions.forEach(s => listEl.appendChild(buildSessionItem(s)));
+}
+
+function buildSessionItem(session) {
+  const item = document.createElement('div');
+  item.className = 'session-item' + (session.id === currentSessionId ? ' active' : '');
+  item.dataset.sessionId = session.id;
+  const date = new Date(session.updatedAt).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  item.innerHTML = `<div class="session-title">${escapeHtml(session.title)}</div><div class="session-date">${escapeHtml(date)}</div>`;
+  item.addEventListener('click', () => selectSession(session, true));
+  return item;
+}
+
+async function selectSession(session, switchToChat = true) {
+  currentSessionId = session.id;
+
+  // 更新会话列表高亮
+  document.querySelectorAll('.session-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.sessionId === session.id);
+  });
+
+  // 更新会话指示栏
+  const indicator = document.getElementById('session-indicator');
+  if (indicator) indicator.textContent = session.title;
+  const bar = document.getElementById('session-indicator-bar');
+  if (bar) bar.classList.add('visible');
+
+  // 加载会话历史并切换到对话面板
+  await loadSessionHistory(session.id);
+  if (switchToChat) showChatPanel();
+}
+
+async function loadSessionHistory(sessionId) {
+  const chatEl = document.getElementById('chat-messages');
+  if (!chatEl) return;
+  chatEl.innerHTML = '';
+
+  try {
+    const res = await fetch(`${BACKEND_API}/api/sessions/${encodeURIComponent(sessionId)}`, {
+      headers: { 'Authorization': `Bearer ${currentAccessToken}` },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error?.message || '请求失败');
+
+    const histories = json.data?.histories || [];
+    histories.forEach(h => {
+      appendUserMessage(h.userInput);
+      const bubble = appendAiMessageElement();
+      updateBubble(bubble, h.isSuccess ? '✅ 原理图生成成功' : '❌ 生成失败', !h.isSuccess);
+    });
+    chatEl.scrollTop = chatEl.scrollHeight;
+  } catch (e) {
+    dbg('loadSessionHistory error:', e);
+  }
+}
+
+async function createNewSession() {
+  const btn = document.getElementById('session-new-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '创建中...'; }
+  try {
+    const res = await fetch(`${BACKEND_API}/api/sessions`, {
+      method:  'POST',
+      headers: {
+        'Authorization': `Bearer ${currentAccessToken}`,
+        'Content-Type':  'application/json',
+      },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error?.message || '创建失败');
+
+    const session = json.data;
+    const listEl  = document.getElementById('session-list');
+    // 删除空状提示
+    const emptyEl = listEl?.querySelector('.session-empty');
+    if (emptyEl) emptyEl.remove();
+    listEl?.prepend(buildSessionItem(session));
+
+    await selectSession(session, true);
+    // 清空新建会话的内容
+    const chatEl = document.getElementById('chat-messages');
+    if (chatEl) chatEl.innerHTML = '';
+    setGenStatus('');
+    showEdaToast('新建会话成功');
+  } catch (e) {
+    dbg('createNewSession error:', e);
+    showEdaToast('新建会话失败：' + (e.message || String(e)), 0);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '＋ 新建对话'; }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Story 3.1: 应用 UI 事件
 // ---------------------------------------------------------------------------
 let appListenersSetup = false;
@@ -416,6 +562,8 @@ function setupAppEventListeners() {
     showHistoryPanel();
     loadHistory();
   });
+  document.getElementById('tab-sessions').addEventListener('click', showSessionPanel);
+  document.getElementById('session-new-btn').addEventListener('click', createNewSession);
 }
 
 async function handleGenerate() {
@@ -636,7 +784,7 @@ async function sendGenerateRequest(userInput) {
         'Authorization': `Bearer ${currentAccessToken}`,
         'Accept':        'text/event-stream',
       },
-      body: JSON.stringify({ userInput }),
+      body: JSON.stringify({ userInput, ...(currentSessionId ? { sessionId: currentSessionId } : {}) }),
     });
 
     if (res.status === 401) {
@@ -681,9 +829,10 @@ async function sendGenerateRequest(userInput) {
 async function handleSSEStream(body, bubbleEl) {
   const reader  = body.getReader();
   const decoder = new TextDecoder();
-  let   buffer  = '';
+  let   buffer      = '';
   let   displayText = '';
   let   circuitJson = null;
+  let   isTextOnly  = false;  // FR-10: 现代协议 text 事件标记
 
   try {
     while (true) {
@@ -701,11 +850,24 @@ async function handleSSEStream(body, bubbleEl) {
 
         try {
           const event = JSON.parse(dataStr);
-          if (event.type === 'progress' && event.text) {
+          if (event.eventType === 'text') {
+            // FR-10: 现代协议 —— 纲文字回复，不触发 EDA SDK
+            isTextOnly = true;
+            if (event.text) {
+              displayText += (displayText ? '\n' : '') + event.text;
+              updateBubble(bubbleEl, displayText);
+              setGenStatus(event.text.slice(0, 50));
+            }
+          } else if (event.eventType === 'schematic' && event.circuitJson) {
+            // FR-10: 现代协议 —— 原理图响应，触发 EDA SDK
+            circuitJson = event.circuitJson;
+          } else if (event.type === 'progress' && event.text) {
+            // 旧协议展居层
             displayText += (displayText ? '\n' : '') + event.text;
             updateBubble(bubbleEl, displayText);
             setGenStatus(event.text.slice(0, 50));
           } else if (event.type === 'complete' && event.circuitJson) {
+            // 旧协议展居层
             circuitJson = event.circuitJson;
           } else if (event.type === 'error') {
             throw new Error(event.message || '后端返回错误');
@@ -723,6 +885,12 @@ async function handleSSEStream(body, bubbleEl) {
     }
   } finally {
     reader.releaseLock();
+  }
+
+  // FR-10: 纲文字响应无需 EDA SDK 渲染
+  if (isTextOnly && !circuitJson) {
+    setGenStatus('');
+    return;
   }
 
   if (!circuitJson) throw new Error('响应未包含电路 JSON（circuitJson 字段缺失）');
