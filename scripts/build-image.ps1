@@ -1,7 +1,7 @@
 ﻿# scripts/build-image.ps1
 # 构建 AiSchGenerator API Docker 镜像
 param(
-    [string]$Version = "v0.1.0",                              # 版本号
+    [string]$Version = "v0.2.0",                              # 版本号
     [string]$Tag = "gilzhang/verdure-aisch-api:$Version",    # 镜像标签
     [switch]$NoCache,                                         # 不使用构建缓存
     [switch]$Push                                             # 构建后推送到 Docker Hub
