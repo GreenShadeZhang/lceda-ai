@@ -7,6 +7,19 @@
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-18-336791?logo=postgresql)](https://www.postgresql.org/)
 [![Docker](https://img.shields.io/badge/Docker-Alpine-2496ED?logo=docker)](https://www.docker.com/)
 [![BMAD](https://img.shields.io/badge/Built%20with-BMAD%20Method-brightgreen)](https://github.com/bmadcode/bmad-method)
+[![API](https://img.shields.io/badge/API-在线运行中-success?logo=cloudflare)](https://lceda-ai.verdure-hiro.cn/healthz)
+
+---
+
+## 🚀 立即体验
+
+**后端 API 已部署上线**，无需自建服务器，直接下载插件即可体验：
+
+1. 前往 [Releases 页面](../../releases) 下载最新版 `.eext` 插件文件
+2. 打开**立创 EDA 专业版** → 扩展 → 扩展管理 → 安装本地扩展 → 选择下载的 `.eext` 文件
+3. 插件已内置连接到 `https://lceda-ai.verdure-hiro.cn/`，无需任何配置，扫码登录即可使用
+
+> 插件通过 Keycloak 设备码授权登录，使用 maker-community 社区账号。
 
 ---
 
@@ -233,6 +246,8 @@ BMAD 方式: 想法 → AI 帮你想清楚（规划/架构/分解）→ AI 按�
 | Epic 4 | 会话管理 & 历史记录持久化 | 🔄 进行中（Review 阶段） |
 | Epic 5 | 原理图智能渲染优化 | 📋 待开始 |
 | Epic 6 | 镜像打包 & 数据库自动初始化 | ✅ 完成 |
+
+**在线服务**：API 已部署至 `https://lceda-ai.verdure-hiro.cn/`，Docker 镜像发布于 [`gilzhang/verdure-aisch-api`](https://hub.docker.com/r/gilzhang/verdure-aisch-api)，插件 `.eext` 文件见 [Releases](../../releases)。
 
 ---
 
