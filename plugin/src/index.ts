@@ -78,6 +78,13 @@ export function openAIPanel(): void {
     subscriptionTasks = [];
     initMessageBusHandlers();
   }
+
+  // 注册供 IFrame 直接调用的 eda 扩展方法（与 easyeda-copilot 相同模式）
+  (eda as any).assembleCircuit = async (circuitJson: any): Promise<void> => {
+    await placeCircuitOnCanvas(circuitJson);
+  };
+  (eda as any).getSchematic = getSchematic;
+
   eda.sys_IFrame.openIFrame('/iframe/index.html', 700, 500, undefined, {
     title: 'AI 原理图生成器',
   });
@@ -570,5 +577,39 @@ async function inspectCanvas(): Promise<any> {
   };
 
   return result;
+}
+
+/**
+ * 读取当前画布（或选中元件）的原理图信息，供 AI 分析使用。
+ * 注册到 eda.getSchematic，供 IFrame 调用（与 easyeda-copilot 相同模式）。
+ */
+async function getSchematic(mode: 'selected' | 'all' = 'all'): Promise<{
+  components: Array<{ ref: string; name: string; lcsc?: string; x: number; y: number }>;
+  description: string;
+}> {
+  let comps: any[];
+  if (mode === 'selected') {
+    // 仅返回选中元件
+    const selected = await eda.sch_PrimitiveComponent.getBySelected?.() ?? [];
+    comps = Array.isArray(selected) ? selected : [];
+  } else {
+    comps = await eda.sch_PrimitiveComponent.getAll() ?? [];
+  }
+
+  const components = (comps as any[]).map(c => ({
+    ref: c.getState_Designator?.() ?? '',
+    name: c.getState_Name?.() ?? '',
+    lcsc: c.getState_SupplierId?.() ?? undefined,
+    x: c.getState_X?.() ?? 0,
+    y: c.getState_Y?.() ?? 0,
+  }));
+
+  const description = components.length === 0
+    ? '画布上没有元件'
+    : `画布上有 ${components.length} 个元件：` +
+      components.slice(0, 20).map(c => `${c.ref}(${c.name})`).join('、') +
+      (components.length > 20 ? ` 等 ${components.length} 个` : '');
+
+  return { components, description };
 }
 

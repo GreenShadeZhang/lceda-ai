@@ -1,4 +1,5 @@
 using AiSchGeneratorApi.Contracts;
+using AiSchGeneratorApi.Api.Controllers;
 
 namespace AiSchGeneratorApi.Services;
 
@@ -10,6 +11,7 @@ public interface ISchematicService
         string userInput,
         string userId,
         Guid? sessionId = null,
+        SchematicContext? schematicContext = null,
         CancellationToken ct = default);
 
     /// <summary>分页查询当前用户的历史记录，按创建时间倒序排列。</summary>

@@ -1,0 +1,78 @@
+.center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  height: 100%;
+  color: var(--text-sub);
+}
+
+.spinner {
+  width: 28px; height: 28px;
+  border: 3px solid var(--bg-overlay);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.hint { font-size: 12px; color: var(--text-muted); }
+
+/* ─── Login ───────────────────────────────────────── */
+.login {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  height: 100%;
+  padding: 24px;
+}
+
+.logo { font-size: 48px; }
+
+.loginTitle { font-size: 20px; font-weight: 600; color: var(--primary); }
+
+.loginSub { font-size: 12px; color: var(--text-muted); text-align: center; }
+
+/* ─── Device flow ─────────────────────────────────── */
+.device {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  height: 100%;
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.deviceTitle { font-size: 13px; color: var(--text-sub); text-align: center; }
+
+.qr {
+  border-radius: var(--radius);
+  border: 2px solid var(--border);
+}
+
+.userCode {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 6px;
+  color: var(--primary);
+  font-family: monospace;
+  background: var(--bg-overlay);
+  padding: 6px 16px;
+  border-radius: var(--radius);
+}
+
+.waitHint { font-size: 11px; color: var(--text-muted); }
+
+.backBtn {
+  font-size: 11px;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  margin-top: 4px;
+}
+.backBtn:hover { color: var(--text-sub); text-decoration: underline; }

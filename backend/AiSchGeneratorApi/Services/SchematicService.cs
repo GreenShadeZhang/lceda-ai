@@ -1,4 +1,5 @@
 using AiSchGeneratorApi.Agents;
+using AiSchGeneratorApi.Api.Controllers;
 using AiSchGeneratorApi.Contracts;
 using AiSchGeneratorApi.Infrastructure.Data;
 using AiSchGeneratorApi.Models;
@@ -25,13 +26,19 @@ public class SchematicService(
         string userInput,
         string userId,
         Guid? sessionId = null,
+        SchematicContext? schematicContext = null,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
         yield return SseEvent.Progress("正在分析电路需求...");
         yield return SseEvent.Progress("正在调用 AI 模型生成电路...");
 
+        // Build effective user input — include schematic context if provided
+        var effectiveInput = schematicContext is { Components.Count: > 0 }
+            ? $"{userInput}\n\n当前原理图上已有以下元件，请在此基础上修改或扩展：\n{schematicContext.Description}"
+            : userInput;
+
         // C# 不允许在含 catch 子句的 try 块中使用 yield，因此提取为独立方法
-        var (success, doc, errorEvt) = await TryParseAsync(userInput, ct);
+        var (success, doc, errorEvt) = await TryParseAsync(effectiveInput, ct);
 
         if (!success)
         {

@@ -41,40 +41,16 @@ async function main() {
   const eextName = `${extConfig.name}-${extConfig.version}.eext`;
   const eextPath = path.join(DIST_DIR, eextName);
 
-  // 4. 用 esbuild 打包 app.js（含 npm 依赖，如 qrcode），然后内联到 index.html
+  // 4. IFrame HTML — Vite single-file build already produces a self-contained
+  //    iframe/index.html (all JS/CSS inlined). Use it directly.
   const iframeDir = path.join(ROOT, 'iframe');
-  const htmlSrc = path.join(iframeDir, 'index.html');
-  const jsSrc   = path.join(iframeDir, 'app.js');
+  const htmlSrc   = path.join(iframeDir, 'index.html');
 
-  let htmlContent = fs.readFileSync(htmlSrc, 'utf-8');
-
-  // 使用 esbuild 打包（write:false，不写文件，直接拿 outputFiles[0].text）
-  const appBundleResult = await esbuild.build({
-    entryPoints: [jsSrc],
-    bundle:      true,
-    write:       false,
-    platform:    'browser',
-    target:      'es2020',
-    format:      'iife',
-    logLevel:    'warning',
-  });
-  const jsContent = appBundleResult.outputFiles[0].text;
-
-  // 将 <script src="app.js"></script> 替换为内联 <script>...内容...</script>
-  htmlContent = htmlContent.replace(
-    /<script\s+src=["']app\.js["']\s*><\/script>/,
-    `<script>\n${jsContent}\n</script>`
-  );
-
-  // 去除调试面板和内联诊断脚本（生产包不需要）
-  // 如需保留调试，将下面两行注释掉
-  htmlContent = htmlContent.replace(
-    /\s*<!-- 调试日志面板[\s\S]*?<\/script>/,
-    ''
-  );
-
-  const inlinedHtml = path.join(BUILD_DIR, '_index_inlined.html');
-  fs.writeFileSync(inlinedHtml, htmlContent, 'utf-8');
+  if (!fs.existsSync(htmlSrc)) {
+    throw new Error(
+      `iframe/index.html not found. Run 'npm run build:web' first (cd web && npm run build).`
+    );
+  }
 
   // 5. 打包为 .eext（ZIP 文件）
   // ZIP 内部结构：
@@ -102,8 +78,8 @@ async function main() {
     // 添加编译后 JS（ZIP 内路径：dist/index.js，与 extension.json entry 对应）
     archive.file(compiledJs, { name: 'dist/index.js' });
 
-    // 添加 iframe 目录：使用内联化后的 HTML（替换原版 index.html）
-    archive.file(inlinedHtml, { name: 'iframe/index.html' });
+    // 添加 iframe 目录：使用 Vite 生成的自包含 HTML
+    archive.file(htmlSrc, { name: 'iframe/index.html' });
     // callback.html 也需要内联（如果有外部脚本引用的话）
     const callbackSrc = path.join(iframeDir, 'callback.html');
     if (fs.existsSync(callbackSrc)) {
@@ -118,8 +94,7 @@ async function main() {
   console.log('\n📦 .eext 内部结构：');
   console.log('   extension.json');
   console.log('   dist/index.js');
-  console.log('   iframe/index.html');
-  console.log('   iframe/app.js');
+  console.log('   iframe/index.html  (Vite single-file build)');
 }
 
 main().catch((err) => {

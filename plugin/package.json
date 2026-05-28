@@ -5,6 +5,8 @@
   "private": true,
   "scripts": {
     "build": "node build.js",
+    "build:web": "cd web && npm run build",
+    "build:all": "npm run build:web && npm run build",
     "typecheck": "tsc --noEmit",
     "watch": "node build.js --watch"
   },

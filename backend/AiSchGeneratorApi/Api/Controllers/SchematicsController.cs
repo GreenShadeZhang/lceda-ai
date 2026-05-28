@@ -26,7 +26,7 @@ public class SchematicsController(ISchematicService service) : ControllerBase
                   ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value
                   ?? string.Empty;
 
-        await foreach (var evt in service.GenerateStreamAsync(req.UserInput, userId, req.SessionId, ct))
+        await foreach (var evt in service.GenerateStreamAsync(req.UserInput, userId, req.SessionId, req.SchematicContext, ct))
         {
             await Response.WriteAsync($"data: {evt.Payload}\n\n", ct);
             await Response.Body.FlushAsync(ct);
@@ -56,4 +56,17 @@ public class SchematicsController(ISchematicService service) : ControllerBase
 }
 
 /// <summary>生成请求 DTO。</summary>
-public record GenerateRequest(string UserInput, Guid? SessionId = null);
+public record GenerateRequest(string UserInput, Guid? SessionId = null, SchematicContext? SchematicContext = null);
+
+/// <summary>当前原理图上下文（由前端读取后附加到请求中）。</summary>
+public record SchematicContext(
+    List<SchematicComponentInfo> Components,
+    string Description);
+
+/// <summary>原理图中的元件信息。</summary>
+public record SchematicComponentInfo(
+    string Ref,
+    string Name,
+    string? Lcsc,
+    double X,
+    double Y);
